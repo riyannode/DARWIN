@@ -19,6 +19,10 @@ class BinanceMappingError(ValueError):
     pass
 
 
+class OrderCorrelationError(BinanceMappingError):
+    pass
+
+
 def _as_datetime(value: Any) -> Any:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         seconds = value / 1000 if abs(value) >= 10_000_000_000 else value
@@ -153,6 +157,31 @@ def map_order_submission(payload: Any) -> OrderSubmission:
         projected,
         "Agent OS order response did not match Binance Spot schema",
     )
+
+
+def validate_order_submission_correlation(
+    payload: Any,
+    *,
+    submission: OrderSubmission,
+    expected_symbol: str,
+    expected_client_order_id: str,
+    expected_side: str,
+) -> None:
+    """Reject an upstream order response that does not belong to this intent."""
+    if submission.symbol != expected_symbol:
+        raise OrderCorrelationError("Agent OS order response symbol did not match the intent")
+    value = _object_payload(payload)
+    returned_client_order_id = value.get("clientOrderId", value.get("client_order_id"))
+    if (
+        returned_client_order_id is not None
+        and returned_client_order_id != expected_client_order_id
+    ):
+        raise OrderCorrelationError(
+            "Agent OS order response client order ID did not match the intent"
+        )
+    returned_side = value.get("side")
+    if returned_side is not None and returned_side != expected_side:
+        raise OrderCorrelationError("Agent OS order response side did not match the intent")
 
 
 def map_balances(payload: Any, observed_at: datetime | None = None) -> BalanceSnapshot:

@@ -17,12 +17,17 @@ from darwinspot.api.auth import (
     require_recent_reauthentication,
 )
 from darwinspot.binance.client import (
+    AgentOSAuthInvalid,
     AgentOSUnavailable,
     BinanceAgentOSClient,
     ToolCatalog,
     UnsupportedCapability,
 )
-from darwinspot.binance.mapper import BinanceMappingError, map_order_submission
+from darwinspot.binance.mapper import (
+    BinanceMappingError,
+    map_order_submission,
+    validate_order_submission_correlation,
+)
 from darwinspot.config import get_settings
 from darwinspot.domain import AgentState
 from darwinspot.observability import log_event
@@ -203,7 +208,7 @@ async def run_once(
             timeout=60,
         )
     except (AgentOSUnavailable, CycleUnavailable, TimeoutError, ValueError) as exc:
-        if isinstance(exc, AgentOSUnavailable):
+        if isinstance(exc, AgentOSAuthInvalid):
             repo.mark_connection_unavailable(connection.id)
         repo.complete_run(run.id, "FAILED", None, str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -264,7 +269,7 @@ async def emergency_stop(
             )
             try:
                 response = map_order_submission(
-                    await client.call_tool(
+                    raw := await client.call_tool(
                         catalog.arguments(
                             "cancel_order",
                             {
@@ -274,6 +279,13 @@ async def emergency_stop(
                             },
                         ),
                     )
+                )
+                validate_order_submission_correlation(
+                    raw,
+                    submission=response,
+                    expected_symbol=intent.pair,
+                    expected_client_order_id=intent.idempotency_key,
+                    expected_side=intent.side,
                 )
                 repo.apply_order_status(
                     intent,
@@ -290,7 +302,7 @@ async def emergency_stop(
         db.commit()
     except (AgentOSUnavailable, BinanceMappingError, ValueError) as exc:
         db.rollback()
-        if isinstance(exc, AgentOSUnavailable):
+        if isinstance(exc, AgentOSAuthInvalid):
             repo.mark_connection_unavailable(connection.id)
         log_event("RECONCILIATION_FAILED", reason=str(exc))
         config = repo.get_or_create_agent()

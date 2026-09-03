@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import httpx2
 import openai
 
-from darwinspot.agent.cycle import CycleConfigurationError, CycleUnavailable, run_cycle
+from darwinspot.agent.cycle import (
+    CycleConfigurationError,
+    CycleUnavailable,
+    SubmissionUncertain,
+    run_cycle,
+)
 from darwinspot.agent.runtime import AgentRuntime
 from darwinspot.binance.client import (
+    AgentOSAuthInvalid,
     AgentOSUnavailable,
     BinanceAgentOSClient,
     UnsupportedCapability,
@@ -39,12 +46,13 @@ def _validate_worker_config(settings: Settings) -> None:
 
 
 def _is_transient_error(exc: BaseException) -> bool:
-    if isinstance(exc, (CycleConfigurationError, UnsupportedCapability)):
+    if isinstance(exc, (AgentOSAuthInvalid, CycleConfigurationError, UnsupportedCapability)):
         return False
     if isinstance(
         exc,
         (
             AgentOSUnavailable,
+            SubmissionUncertain,
             CycleUnavailable,
             TimeoutError,
             httpx2.RequestError,
@@ -103,12 +111,13 @@ async def run_worker() -> None:
                     )
                 except Exception as exc:
                     transient = _is_transient_error(exc)
-                    if transient and isinstance(exc, AgentOSUnavailable):
+                    if isinstance(exc, AgentOSAuthInvalid):
                         repo.mark_connection_unavailable(connection_id)
                     repo.complete_run(run.id, "FAILED", None, str(exc))
                     if transient:
                         failure_streak += 1
                         sleep_seconds = _backoff_seconds(failure_streak)
+                        config.next_run_at = datetime.now(UTC) + timedelta(seconds=sleep_seconds)
                     else:
                         log_event(
                             "AGENT_CYCLE_FAILED",

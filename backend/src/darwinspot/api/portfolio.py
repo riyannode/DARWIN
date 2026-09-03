@@ -8,7 +8,12 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from darwinspot.api.auth import current_owner, mutation_owner, require_recent_reauthentication
-from darwinspot.binance.client import AgentOSUnavailable, BinanceAgentOSClient, ToolCatalog
+from darwinspot.binance.client import (
+    AgentOSAuthInvalid,
+    AgentOSUnavailable,
+    BinanceAgentOSClient,
+    ToolCatalog,
+)
 from darwinspot.binance.mapper import (
     BinanceMappingError,
     map_balances,
@@ -150,7 +155,7 @@ async def get_portfolio(
                     allocation_timestamp, market.timestamp or market.observed_at
                 )
     except (AgentOSUnavailable, BinanceMappingError, ValueError) as exc:
-        if isinstance(exc, AgentOSUnavailable):
+        if isinstance(exc, AgentOSAuthInvalid):
             repo = Repository(db)
             repo.mark_connection_unavailable(connection.id)
             db.commit()

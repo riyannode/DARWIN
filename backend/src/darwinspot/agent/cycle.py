@@ -4,9 +4,16 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from darwinspot.agent.runtime import AgentRuntime
-from darwinspot.binance.client import AgentOSUnavailable, BinanceAgentOSClient, ToolCatalog
+from darwinspot.binance.client import (
+    AgentOSAuthInvalid,
+    AgentOSUnavailable,
+    BinanceAgentOSClient,
+    ToolCatalog,
+    UnsupportedCapability,
+)
 from darwinspot.binance.mapper import (
     BinanceMappingError,
+    OrderCorrelationError,
     map_balances,
     map_mcp_result,
     map_open_orders,
@@ -15,6 +22,7 @@ from darwinspot.binance.mapper import (
     map_spot_market_universe,
     map_symbol_filters,
     order_submission_evidence,
+    validate_order_submission_correlation,
 )
 from darwinspot.domain import new_idempotency_key
 from darwinspot.execution.budget import BudgetExceeded
@@ -30,6 +38,10 @@ class CycleUnavailable(RuntimeError):
 
 
 class CycleConfigurationError(CycleUnavailable):
+    pass
+
+
+class SubmissionUncertain(AgentOSUnavailable):
     pass
 
 
@@ -200,39 +212,32 @@ async def run_cycle(
 async def submit_intent(
     repo: Repository, client: BinanceAgentOSClient, catalog: ToolCatalog, intent: TradeIntent
 ) -> str:
+    repo.ensure_submission_allowed()
+    submission_call = catalog.arguments("submit_order", {"intent": intent})
     upstream: Any = None
     try:
-        repo.ensure_submission_allowed()
-        upstream = await client.call_tool(catalog.arguments("submit_order", {"intent": intent}))
+        upstream = await client.call_tool(submission_call)
         submission = map_order_submission(upstream)
+        validate_order_submission_correlation(
+            upstream,
+            submission=submission,
+            expected_symbol=intent.pair,
+            expected_client_order_id=intent.idempotency_key,
+            expected_side=intent.side,
+        )
     except SubmissionBlocked:
         if intent.binance_order_id is None:
             intent.local_state = "PROPOSED"
             repo.db.commit()
         raise
-    except (AgentOSUnavailable, BinanceMappingError, TimeoutError) as exc:
-        intent.local_state = "SUBMISSION_UNKNOWN"
-        repo.record_order_event(
-            intent=intent,
-            event_type="SUBMISSION_FAILED",
-            filled_quantity=None,
-            filled_notional=None,
-            exchange_timestamp=None,
-            evidence=order_submission_evidence(
-                upstream,
-                intent_id=intent.id,
-                client_order_id=intent.idempotency_key,
-                error=exc,
-            ),
-        )
-        repo.db.commit()
-        log_event(
-            "ORDER_SUBMIT_UNKNOWN",
-            intent_id=intent.id,
-            pair=intent.pair,
-            error_code=type(exc).__name__,
-        )
+    except UnsupportedCapability:
         raise
+    except AgentOSAuthInvalid as exc:
+        _record_submission_unknown(repo, intent, upstream, exc)
+        raise
+    except (AgentOSUnavailable, BinanceMappingError, TimeoutError) as exc:
+        _record_submission_unknown(repo, intent, upstream, exc)
+        raise SubmissionUncertain("order submission outcome is uncertain") from exc
     repo.apply_order_status(
         intent,
         order_id=submission.order_id,
@@ -249,6 +254,32 @@ async def submit_intent(
     )
     repo.db.commit()
     return intent.local_state
+
+
+def _record_submission_unknown(
+    repo: Repository, intent: TradeIntent, upstream: Any, error: BaseException
+) -> None:
+    intent.local_state = "SUBMISSION_UNKNOWN"
+    repo.record_order_event(
+        intent=intent,
+        event_type="SUBMISSION_FAILED",
+        filled_quantity=None,
+        filled_notional=None,
+        exchange_timestamp=None,
+        evidence=order_submission_evidence(
+            upstream,
+            intent_id=intent.id,
+            client_order_id=intent.idempotency_key,
+            error=error,
+        ),
+    )
+    repo.db.commit()
+    log_event(
+        "ORDER_SUBMIT_UNKNOWN",
+        intent_id=intent.id,
+        pair=intent.pair,
+        error_code=type(error).__name__,
+    )
 
 
 async def reconcile_open_intents(repo: Repository, client: BinanceAgentOSClient) -> None:
@@ -278,6 +309,13 @@ async def reconcile_open_intents(repo: Repository, client: BinanceAgentOSClient)
                 )
             )
             status = map_order_submission(raw)
+            validate_order_submission_correlation(
+                raw,
+                submission=status,
+                expected_symbol=intent.pair,
+                expected_client_order_id=intent.idempotency_key,
+                expected_side=intent.side,
+            )
             repo.apply_order_status(
                 intent,
                 order_id=status.order_id,
@@ -285,11 +323,23 @@ async def reconcile_open_intents(repo: Repository, client: BinanceAgentOSClient)
                 filled_quantity=status.executed_quantity,
                 filled_notional=status.quote_notional,
                 exchange_timestamp=status.updated_at,
-                evidence=status.model_dump(mode="json"),
+                evidence=order_submission_evidence(
+                    raw,
+                    intent_id=intent.id,
+                    client_order_id=intent.idempotency_key,
+                    submission=status,
+                ),
             )
+        except AgentOSAuthInvalid:
+            raise
+        except OrderCorrelationError as exc:
+            log_event("RECONCILIATION_FAILED", intent_id=intent.id, reason=str(exc))
+            raise SubmissionUncertain(
+                "order reconciliation response did not match the intent"
+            ) from exc
         except (AgentOSUnavailable, BinanceMappingError, ValueError) as exc:
             log_event("RECONCILIATION_FAILED", intent_id=intent.id, reason=str(exc))
-            raise
+            raise SubmissionUncertain("order reconciliation is temporarily unavailable") from exc
     repo.db.commit()
 
 
@@ -317,6 +367,27 @@ async def _cancel_target(
             )
         )
         response = map_order_submission(raw)
+        validate_order_submission_correlation(
+            raw,
+            submission=response,
+            expected_symbol=intent.pair,
+            expected_client_order_id=intent.idempotency_key,
+            expected_side=intent.side,
+        )
+    except AgentOSAuthInvalid:
+        repo.db.rollback()
+        intent = repo.find_intent_by_order_id(order_id)
+        if intent is not None:
+            intent.local_state = "CANCEL_PENDING"
+            repo.db.commit()
+        raise
+    except OrderCorrelationError as exc:
+        repo.db.rollback()
+        intent = repo.find_intent_by_order_id(order_id)
+        if intent is not None:
+            intent.local_state = "CANCEL_PENDING"
+            repo.db.commit()
+        raise SubmissionUncertain("cancel response did not match the intent") from exc
     except (AgentOSUnavailable, BinanceMappingError):
         repo.db.rollback()
         intent = repo.find_intent_by_order_id(order_id)
