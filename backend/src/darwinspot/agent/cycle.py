@@ -12,7 +12,9 @@ from darwinspot.binance.mapper import (
     map_open_orders,
     map_order_submission,
     map_recent_activity,
+    map_spot_market_universe,
     map_symbol_filters,
+    order_submission_evidence,
 )
 from darwinspot.domain import new_idempotency_key
 from darwinspot.execution.budget import BudgetExceeded
@@ -27,13 +29,8 @@ class CycleUnavailable(RuntimeError):
     pass
 
 
-def _mandate_pairs(assets: str) -> set[str]:
-    tokens = "".join(character if character.isalnum() else " " for character in assets.upper())
-    return {token for token in tokens.split() if token}
-
-
-def _pair_is_in_mandate(pair: str, assets: str) -> bool:
-    return pair in _mandate_pairs(assets)
+class CycleConfigurationError(CycleUnavailable):
+    pass
 
 
 async def run_cycle(
@@ -45,7 +42,7 @@ async def run_cycle(
     if config.emergency_stop:
         raise CycleUnavailable("emergency stop is active")
     if mandate is None or budget is None:
-        raise CycleUnavailable("mandate and budget must exist before a cycle")
+        raise CycleConfigurationError("mandate and budget must exist before a cycle")
     await reconcile_open_intents(repo, client)
     if any(
         intent.local_state in {"SUBMITTING", "SUBMISSION_UNKNOWN", "CANCEL_PENDING"}
@@ -57,8 +54,13 @@ async def run_cycle(
         raise CycleUnavailable("budget disappeared after order reconciliation")
 
     catalog = ToolCatalog(await client.discover_tools())
+    market_universe = map_spot_market_universe(
+        await client.call_tool(catalog.arguments("market_universe", {}))
+    )
+    available_pairs = {item["symbol"] for item in market_universe}
     selection = await runtime.choose_pair(
         {
+            "market_universe": market_universe,
             "mandate": {
                 "assets": mandate.assets,
                 "entry_rules": mandate.entry_rules,
@@ -72,8 +74,10 @@ async def run_cycle(
         }
     )
     pair = selection.pair
-    if not _pair_is_in_mandate(pair, mandate.assets):
-        raise CycleUnavailable("model selected a pair that is not explicitly listed in the mandate")
+    if pair not in available_pairs:
+        raise CycleUnavailable(
+            "model selected a pair that is not available in the live market universe"
+        )
 
     observed_at = datetime.now(UTC)
     market = map_mcp_result(
@@ -190,13 +194,13 @@ async def run_cycle(
         return "BUDGET_EXCEEDED"
     if config.mode == "APPROVAL_REQUIRED":
         return "PROPOSED"
-    await submit_intent(repo, client, catalog, intent)
-    return result.result
+    return await submit_intent(repo, client, catalog, intent)
 
 
 async def submit_intent(
     repo: Repository, client: BinanceAgentOSClient, catalog: ToolCatalog, intent: TradeIntent
 ) -> str:
+    upstream: Any = None
     try:
         repo.ensure_submission_allowed()
         upstream = await client.call_tool(catalog.arguments("submit_order", {"intent": intent}))
@@ -206,10 +210,28 @@ async def submit_intent(
             intent.local_state = "PROPOSED"
             repo.db.commit()
         raise
-    except (AgentOSUnavailable, BinanceMappingError):
+    except (AgentOSUnavailable, BinanceMappingError, TimeoutError) as exc:
         intent.local_state = "SUBMISSION_UNKNOWN"
+        repo.record_order_event(
+            intent=intent,
+            event_type="SUBMISSION_FAILED",
+            filled_quantity=None,
+            filled_notional=None,
+            exchange_timestamp=None,
+            evidence=order_submission_evidence(
+                upstream,
+                intent_id=intent.id,
+                client_order_id=intent.idempotency_key,
+                error=exc,
+            ),
+        )
         repo.db.commit()
-        log_event("ORDER_SUBMIT_UNKNOWN", intent_id=intent.id, pair=intent.pair)
+        log_event(
+            "ORDER_SUBMIT_UNKNOWN",
+            intent_id=intent.id,
+            pair=intent.pair,
+            error_code=type(exc).__name__,
+        )
         raise
     repo.apply_order_status(
         intent,
@@ -218,7 +240,12 @@ async def submit_intent(
         filled_quantity=submission.executed_quantity,
         filled_notional=submission.quote_notional,
         exchange_timestamp=submission.updated_at,
-        evidence=submission.model_dump(mode="json"),
+        evidence=order_submission_evidence(
+            upstream,
+            intent_id=intent.id,
+            client_order_id=intent.idempotency_key,
+            submission=submission,
+        ),
     )
     repo.db.commit()
     return intent.local_state

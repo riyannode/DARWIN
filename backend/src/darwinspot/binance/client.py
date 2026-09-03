@@ -115,6 +115,14 @@ class ToolCatalog:
         "leverage",
     )
     _patterns = {
+        "market_universe": (
+            "exchange information",
+            "exchange_info",
+            "exchangeinfo",
+            "all symbols",
+            "ticker",
+            "market data",
+        ),
         "market": ("ticker", "price", "market data", "kline"),
         "balances": ("balance", "account"),
         "open_orders": ("open order", "open_orders", "openorders"),
@@ -163,6 +171,8 @@ class ToolCatalog:
         candidates: list[tuple[int, ToolDescriptor]] = []
         for tool in self.tools:
             if not self.is_permitted(tool.name, tool.description):
+                continue
+            if operation == "market_universe" and "symbol" in self._required(tool):
                 continue
             text = f"{tool.name} {tool.description}".lower()
             if operation == "submit_order" and "test" in text:
@@ -254,7 +264,9 @@ class ToolCatalog:
     def arguments(self, operation: str, values: Mapping[str, Any]) -> ToolCall:
         tool = self.resolve(operation)
         arguments: dict[str, Any] = {}
-        if operation in {"market", "symbol_filters", "open_orders"}:
+        if operation == "market_universe":
+            pass
+        elif operation in {"market", "symbol_filters", "open_orders"}:
             self._put(
                 tool,
                 arguments,

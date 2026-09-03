@@ -282,6 +282,7 @@ def orders(
             "side": row.side,
             "state": row.local_state,
             "binanceOrderId": row.binance_order_id,
+            "clientOrderId": row.idempotency_key,
         }
         for row in rows
     ]
@@ -321,6 +322,7 @@ def activity(
                 "pair": intent.pair,
                 "budgetResult": intent.budget_result,
                 "binanceOrderId": intent.binance_order_id,
+                "clientOrderId": intent.idempotency_key,
             }
             for intent in intents
         ]
@@ -382,6 +384,8 @@ def activity_detail(
             "budgetResult": intent.budget_result,
             "committedNotional": intent.committed_notional,
             "binanceOrderId": intent.binance_order_id,
+            "clientOrderId": intent.idempotency_key,
+            "intentId": intent.id,
             "budgetVersion": run.budget_version if run else None,
             "idempotencyKey": intent.idempotency_key,
             "events": [
@@ -392,6 +396,7 @@ def activity_detail(
                     "filledNotional": event.filled_notional,
                     "observedAt": event.observed_at,
                     "exchangeTimestamp": event.exchange_timestamp,
+                    "evidence": json.loads(event.sanitized_evidence),
                 }
                 for event in order_events
             ],
