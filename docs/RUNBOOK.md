@@ -72,18 +72,17 @@ cd ..
 
 Put the Fernet output in `TOKEN_ENCRYPTION_KEY`. Put the Argon2id output in `OWNER_PASSWORD_HASH`. The password entered for the hash is the owner password used by the DarwinSpot sidebar login.
 
-Create a local PostgreSQL role and database if they do not already exist. Choose a local password and keep it only in the environment file or your local secret store:
+Create a local PostgreSQL role and database if they do not already exist. Let PostgreSQL prompt for the role password so it is not stored in shell history or process arguments:
 
 ```bash
-read -rsp "PostgreSQL password: " DB_PASSWORD; printf '\n'
-sudo -u postgres psql -c "CREATE ROLE darwinspot LOGIN PASSWORD '${DB_PASSWORD}';"
-unset DB_PASSWORD
-sudo -u postgres createdb -O darwinspot darwinspot
+sudo -u postgres createuser --login --pwprompt darwinspot
+sudo -u postgres createdb --owner=darwinspot darwinspot
 ```
 
 If the role or database already exists, do not run the create command again; use the existing connection details instead.
 
-Set `DATABASE_URL` in `backend/.env` using the role, password, host, port, and database you created:
+Set `DATABASE_URL` in `backend/.env` using the role, password, host, port, and database you created. Percent-encode special characters in the password before placing it in the URL:
+
 
 ```dotenv
 DATABASE_URL=postgresql+psycopg://darwinspot:<local-database-password>@127.0.0.1:5432/darwinspot
