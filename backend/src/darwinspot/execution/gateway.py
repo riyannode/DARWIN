@@ -36,9 +36,7 @@ class ExecutionGateway:
     def check(self, decision: AgentDecision) -> GateResult:
         if not self.emergency_stop.can_submit:
             return GateResult("REJECTED_STOP", None, "emergency stop is active")
-        is_buy = decision.action == "BUY" or (
-            decision.action == "CANCEL_REPLACE" and decision.side == "BUY"
-        )
+        is_buy = decision.action == "BUY"
         if is_buy:
             notional = self._computed_buy_notional(decision)
             if not self.budget.can_buy(notional):
@@ -47,15 +45,13 @@ class ExecutionGateway:
             if correctness is not None:
                 return GateResult("REJECTED_CORRECTNESS", None, correctness)
             return GateResult("ALLOW", notional)
-        if decision.action == "SELL" or (
-            decision.action == "CANCEL_REPLACE" and decision.side == "SELL"
-        ):
+        if decision.action == "SELL":
             if decision.quantity is None:
                 return GateResult("REJECTED_CORRECTNESS", None, "sell requires quantity")
             correctness = self._check_order(decision, None)
             if correctness is not None:
                 return GateResult("REJECTED_CORRECTNESS", None, correctness)
-        if decision.action in {"SELL", "CANCEL", "CANCEL_REPLACE", "HOLD"}:
+        if decision.action in {"SELL", "HOLD"}:
             return GateResult("ALLOW", None)
         return GateResult("REJECTED_SCHEMA", None, "unsupported action")
 
@@ -94,9 +90,7 @@ class ExecutionGateway:
                 return "limit order requires price"
             if decision.price % self.filters.tick_size != 0:
                 return "price does not satisfy Binance tick size"
-        is_buy = decision.action == "BUY" or (
-            decision.action == "CANCEL_REPLACE" and decision.side == "BUY"
-        )
+        is_buy = decision.action == "BUY"
         order_notional = notional or decision.quantity * (decision.price or self.market.price)
         if order_notional < self.filters.min_notional:
             return "order notional is below Binance minimum notional"

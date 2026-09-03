@@ -6,6 +6,16 @@ from enum import StrEnum
 
 class IntentState(StrEnum):
     PROPOSED = "PROPOSED"
+    WAITING_FOR_APPROVAL = "WAITING_FOR_APPROVAL"
+    APPROVED = "APPROVED"
+    REVALIDATING = "REVALIDATING"
+    WAITING_FOR_EXECUTION_CONFIRMATION = "WAITING_FOR_EXECUTION_CONFIRMATION"
+    REJECTED = "REJECTED"
+    APPROVAL_EXPIRED = "APPROVAL_EXPIRED"
+    REVALIDATION_FAILED = "REVALIDATION_FAILED"
+    CONFIRMATION_DECLINED = "CONFIRMATION_DECLINED"
+    CONFIRMATION_EXPIRED = "CONFIRMATION_EXPIRED"
+    BLOCKED = "BLOCKED"
     REJECTED_BUDGET = "REJECTED_BUDGET"
     READY = "READY"
     SUBMITTING = "SUBMITTING"
@@ -28,11 +38,37 @@ class SubmissionBlocked(ValueError):
 
 
 _TRANSITIONS: dict[tuple[IntentState, str], IntentState] = {
+    (IntentState.PROPOSED, "approval_requested"): IntentState.WAITING_FOR_APPROVAL,
+    (IntentState.WAITING_FOR_APPROVAL, "approve"): IntentState.APPROVED,
+    (IntentState.WAITING_FOR_APPROVAL, "reject"): IntentState.REJECTED,
+    (IntentState.WAITING_FOR_APPROVAL, "approval_expired"): IntentState.APPROVAL_EXPIRED,
+    (IntentState.APPROVED, "begin_revalidation"): IntentState.REVALIDATING,
+    (
+        IntentState.REVALIDATING,
+        "confirmation_required",
+    ): IntentState.WAITING_FOR_EXECUTION_CONFIRMATION,
+    (IntentState.REVALIDATING, "revalidation_failed"): IntentState.REVALIDATION_FAILED,
+    (IntentState.REVALIDATING, "submit"): IntentState.SUBMITTING,
+    (
+        IntentState.WAITING_FOR_EXECUTION_CONFIRMATION,
+        "confirmation_declined",
+    ): IntentState.CONFIRMATION_DECLINED,
+    (
+        IntentState.WAITING_FOR_EXECUTION_CONFIRMATION,
+        "confirmation_expired",
+    ): IntentState.CONFIRMATION_EXPIRED,
+    (
+        IntentState.WAITING_FOR_EXECUTION_CONFIRMATION,
+        "confirmation_accepted",
+    ): IntentState.SUBMITTING,
+    (IntentState.APPROVED, "blocked"): IntentState.BLOCKED,
+    (IntentState.REVALIDATING, "blocked"): IntentState.BLOCKED,
     (IntentState.PROPOSED, "budget_rejected"): IntentState.REJECTED_BUDGET,
     (IntentState.PROPOSED, "budget_allowed"): IntentState.READY,
     (IntentState.READY, "submit"): IntentState.SUBMITTING,
     (IntentState.SUBMITTING, "unknown"): IntentState.SUBMISSION_UNKNOWN,
     (IntentState.SUBMITTING, "open"): IntentState.OPEN,
+    (IntentState.SUBMITTING, "exchange_expired"): IntentState.EXPIRED,
     (IntentState.SUBMITTING, "exchange_rejected"): IntentState.REJECTED_EXCHANGE,
     (IntentState.SUBMISSION_UNKNOWN, "reconciled_open"): IntentState.OPEN,
     (IntentState.SUBMISSION_UNKNOWN, "reconciled_partial"): IntentState.PARTIALLY_FILLED,

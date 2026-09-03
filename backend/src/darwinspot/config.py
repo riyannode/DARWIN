@@ -1,7 +1,8 @@
 from functools import lru_cache
+from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,6 +33,16 @@ class Settings(BaseSettings):
     owner_password_hash: str | None = None
     frontend_origin: str = "http://localhost:3000"
     agent_cycle_seconds: int = Field(default=300, ge=5)
+    signal_cooldown_seconds: int = Field(default=300, ge=0, le=86400)
+    approval_ttl_seconds: int = Field(default=90, ge=30, le=180)
+    telegram_bot_token: str | None = None
+    telegram_operator_chat_id: int | None = None
+    telegram_operator_user_id: int | None = None
+    telegram_webhook_secret: str | None = None
+    binance_agent_os_transport: Literal["codex", "direct_oauth"] = "codex"
+    codex_app_server_command: str = "codex app-server --stdio"
+    codex_app_server_version: str = "0.153.0"
+    codex_write_confirmation_verified: bool = False
     log_level: str = "INFO"
 
     @field_validator("openai_api_key")
@@ -52,6 +63,28 @@ class Settings(BaseSettings):
     @classmethod
     def validate_base_url(cls, value: str | None) -> str | None:
         return validate_openai_base_url(value)
+
+    @model_validator(mode="after")
+    def validate_telegram_configuration(self) -> Settings:
+        configured = (
+            self.telegram_bot_token,
+            self.telegram_operator_chat_id,
+            self.telegram_operator_user_id,
+            self.telegram_webhook_secret,
+        )
+        if any(value is not None for value in configured) and not all(
+            value is not None and (not isinstance(value, str) or bool(value.strip()))
+            for value in configured
+        ):
+            raise ValueError(
+                "TELEGRAM_BOT_TOKEN, TELEGRAM_OPERATOR_CHAT_ID, "
+                "TELEGRAM_OPERATOR_USER_ID, and TELEGRAM_WEBHOOK_SECRET must be configured together"
+            )
+        if self.telegram_operator_user_id is not None and self.telegram_operator_user_id <= 0:
+            raise ValueError("TELEGRAM_OPERATOR_USER_ID must be positive")
+        if not self.codex_app_server_version.strip():
+            raise ValueError("CODEX_APP_SERVER_VERSION must not be empty")
+        return self
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
 

@@ -4,9 +4,10 @@ import asyncio
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider
 from mcp.shared.auth import OAuthClientMetadata
@@ -14,8 +15,11 @@ from pydantic import AnyUrl, TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from darwinspot.agent.cycle import submit_intent
 from darwinspot.api.auth import current_owner, mutation_owner
+from darwinspot.approval.service import (
+    ApprovalError,
+    TradeIntentApprovalService,
+)
 from darwinspot.binance.client import (
     AgentOSAuthInvalid,
     AgentOSUnavailable,
@@ -23,20 +27,31 @@ from darwinspot.binance.client import (
     DatabaseOAuthStorage,
     ToolCatalog,
 )
-from darwinspot.binance.mapper import (
-    BinanceMappingError,
-    map_order_submission,
-    validate_order_submission_correlation,
+from darwinspot.binance.codex_transport import (
+    CodexAppServerTransport,
+    CodexAuthRequired,
+    CodexTransportError,
 )
 from darwinspot.config import get_settings
-from darwinspot.execution.budget import BudgetExceeded
+from darwinspot.notifications.telegram import (
+    TelegramDeliveryError,
+    TelegramNotConfigured,
+    TelegramNotifier,
+)
 from darwinspot.observability import log_event
 from darwinspot.security.encryption import (
     decrypt_connection_material,
     encrypt_connection_material,
 )
 from darwinspot.storage.database import SessionLocal, get_db
-from darwinspot.storage.models import AgentRun, BinanceConnection, OrderEvent, TradeIntent
+from darwinspot.storage.models import (
+    AgentRun,
+    BinanceConnection,
+    OrderEvent,
+    OutboxMessage,
+    TradeIntent,
+    TradeIntentApproval,
+)
 from darwinspot.storage.repository import Repository
 
 router = APIRouter(tags=["activity"])
@@ -58,6 +73,9 @@ _oauth_flows: dict[str, PendingOAuth] = {}
 def binance_status(
     _: object = Depends(current_owner), db: Session = Depends(get_db)
 ) -> dict[str, object]:
+    settings = get_settings()
+    if settings.binance_agent_os_transport == "codex":
+        return {"state": "AUTH_REQUIRED", "accountReference": None, "capabilities": []}
     return Repository(db).redact_connection(Repository(db).current_connection())
 
 
@@ -68,6 +86,17 @@ async def binance_connect(
     from uuid import uuid7
 
     settings = get_settings()
+    if settings.binance_agent_os_transport == "codex":
+        return {
+            "state": "AUTH_REQUIRED",
+            "transport": "codex",
+            "mcpEndpoint": settings.binance_agent_os_mcp_url,
+            "authorizationRequired": True,
+            "message": (
+                "Codex App Server is the configured Binance transport. Complete the genuine "
+                "Codex-managed OAuth flow later; custom DARWIN OAuth is not used by runtime."
+            ),
+        }
     if not settings.token_encryption_key:
         raise HTTPException(
             status_code=503, detail="TOKEN_ENCRYPTION_KEY is required for Agent OS auth"
@@ -215,6 +244,41 @@ async def binance_connect(
     }
 
 
+@router.get("/api/integrations/codex/status")
+async def codex_status(_: object = Depends(current_owner)) -> dict[str, object]:
+    settings = get_settings()
+    if settings.binance_agent_os_transport != "codex":
+        return {
+            "transport": settings.binance_agent_os_transport,
+            "state": "LEGACY_DIRECT_OAUTH",
+            "verification": "UNVERIFIED",
+            "authenticated": False,
+            "tools": [],
+        }
+    transport = CodexAppServerTransport(settings)
+    try:
+        status = await transport.status(detail="toolsAndAuthOnly")
+        return {
+            "transport": "codex",
+            "state": status.auth_state,
+            "verification": "UNVERIFIED",
+            "authenticated": status.auth_state == "CONNECTED",
+            "tools": sorted(status.tools),
+            "runtimeStatus": status.runtime_status,
+        }
+    except (CodexAuthRequired, CodexTransportError) as exc:
+        return {
+            "transport": "codex",
+            "state": "AUTH_REQUIRED" if isinstance(exc, CodexAuthRequired) else "UNAVAILABLE",
+            "verification": "UNVERIFIED",
+            "authenticated": False,
+            "tools": [],
+            "reason": str(exc),
+        }
+    finally:
+        await transport.close()
+
+
 @router.get("/api/integrations/binance/callback")
 async def binance_callback(
     _: object = Depends(current_owner),
@@ -304,6 +368,15 @@ def activity(
     order_events = db.scalars(
         select(OrderEvent).order_by(OrderEvent.observed_at.desc()).limit(100)
     ).all()
+    approvals = {
+        approval.intent_id: approval for approval in db.scalars(select(TradeIntentApproval)).all()
+    }
+    deliveries = {
+        row.aggregate_id: row
+        for row in db.scalars(
+            select(OutboxMessage).where(OutboxMessage.kind == "TELEGRAM_PROPOSAL")
+        ).all()
+    }
     events: list[dict[str, object]] = [
         {
             "id": run.id,
@@ -328,6 +401,13 @@ def activity(
                 "budgetResult": intent.budget_result,
                 "binanceOrderId": intent.binance_order_id,
                 "clientOrderId": intent.idempotency_key,
+                "approvalState": approvals[intent.id].status if intent.id in approvals else None,
+                "approvalExpiresAt": (
+                    approvals[intent.id].expires_at if intent.id in approvals else None
+                ),
+                "notificationState": (
+                    deliveries[intent.id].status if intent.id in deliveries else "NOT_CREATED"
+                ),
             }
             for intent in intents
         ]
@@ -370,6 +450,17 @@ def activity_detail(
         }
     intent = db.get(TradeIntent, activity_id)
     if intent is not None:
+        approval = db.scalar(
+            select(TradeIntentApproval).where(TradeIntentApproval.intent_id == intent.id).limit(1)
+        )
+        delivery = db.scalar(
+            select(OutboxMessage)
+            .where(
+                OutboxMessage.aggregate_id == intent.id,
+                OutboxMessage.kind == "TELEGRAM_PROPOSAL",
+            )
+            .limit(1)
+        )
         run = db.get(AgentRun, intent.agent_run_id)
         order_events = db.scalars(
             select(OrderEvent)
@@ -393,6 +484,24 @@ def activity_detail(
             "intentId": intent.id,
             "budgetVersion": run.budget_version if run else None,
             "idempotencyKey": intent.idempotency_key,
+            "approval": (
+                {
+                    "id": approval.approval_id,
+                    "state": approval.status,
+                    "expiresAt": approval.expires_at,
+                    "decidedAt": approval.decided_at,
+                    "decisionSource": approval.decision_source,
+                }
+                if approval is not None
+                else None
+            ),
+            "notificationState": delivery.status if delivery is not None else "NOT_CREATED",
+            "rationale": intent.rationale,
+            "supportingFactors": json.loads(intent.supporting_factors),
+            "riskFactors": json.loads(intent.risk_factors),
+            "confidence": intent.confidence,
+            "revalidationEvidence": intent.revalidation_evidence,
+            "revalidationFailedReason": intent.revalidation_failed_reason,
             "events": [
                 {
                     "id": event.id,
@@ -434,70 +543,10 @@ async def cancel_order(
     _: object = Depends(mutation_owner),
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
-    intent = Repository(db).find_intent_by_order_id(order_id)
-    if intent is None:
-        raise HTTPException(status_code=404, detail="order not found")
-    if intent.binance_order_id is None:
-        raise HTTPException(status_code=409, detail="order has not been accepted by Binance")
-    connection = Repository(db).current_connection()
-    if connection is None or connection.state != "CONNECTED":
-        raise HTTPException(status_code=503, detail="Binance Agent OS is not connected")
-    intent.local_state = "CANCEL_PENDING"
-    db.commit()
-    try:
-        settings = get_settings()
-        if not settings.token_encryption_key:
-            raise AgentOSUnavailable("TOKEN_ENCRYPTION_KEY is required for Agent OS auth")
-        client = BinanceAgentOSClient.with_oauth(
-            settings.binance_agent_os_mcp_url,
-            connection.id,
-            settings.token_encryption_key,
-            f"{settings.frontend_origin.rstrip('/')}/api/integrations/binance/callback",
-            f"{settings.frontend_origin.rstrip('/')}/.well-known/darwinspot-oauth-client.json",
-        )
-        catalog = ToolCatalog(await client.discover_tools())
-        log_event("ORDER_CANCEL_REQUESTED", intent_id=intent.id, order_id=intent.binance_order_id)
-        raw = await client.call_tool(
-            catalog.arguments(
-                "cancel_order",
-                {
-                    "symbol": intent.pair,
-                    "order_id": intent.binance_order_id,
-                    "client_order_id": intent.idempotency_key,
-                },
-            )
-        )
-        response = map_order_submission(raw)
-        validate_order_submission_correlation(
-            raw,
-            submission=response,
-            expected_symbol=intent.pair,
-            expected_client_order_id=intent.idempotency_key,
-            expected_side=intent.side,
-        )
-    except (AgentOSUnavailable, BinanceMappingError, ValueError) as exc:
-        if isinstance(exc, AgentOSAuthInvalid):
-            Repository(db).mark_connection_unavailable(connection.id)
-        intent.local_state = "CANCEL_PENDING"
-        db.commit()
-        log_event("RECONCILIATION_FAILED", intent_id=intent.id, reason=str(exc))
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    if response.status not in {"CANCELED", "FILLED", "EXPIRED"}:
-        intent.local_state = "CANCEL_PENDING"
-        db.commit()
-        raise HTTPException(status_code=503, detail="cancel result requires reconciliation")
-    repo = Repository(db)
-    repo.apply_order_status(
-        intent,
-        order_id=response.order_id,
-        status=response.status,
-        filled_quantity=response.executed_quantity,
-        filled_notional=response.quote_notional,
-        exchange_timestamp=response.updated_at,
-        evidence=response.model_dump(mode="json"),
+    raise HTTPException(
+        status_code=410,
+        detail="direct cancellation is disabled; use the explicit emergency stop control",
     )
-    db.commit()
-    return {"id": intent.id, "state": intent.local_state}
 
 
 @router.post("/api/orders/{order_id}/approve")
@@ -510,33 +559,144 @@ async def approve_order(
     intent = repo.find_intent_by_order_id(order_id)
     if intent is None:
         raise HTTPException(status_code=404, detail="order not found")
-    if intent.local_state != "PROPOSED":
-        raise HTTPException(status_code=409, detail="only a proposed order can be approved")
-    config = repo.get_or_create_agent()
-    if config.emergency_stop:
-        raise HTTPException(status_code=409, detail="emergency stop is active")
-    connection = repo.current_connection()
-    if connection is None or connection.state != "CONNECTED":
-        raise HTTPException(status_code=503, detail="Binance Agent OS is not connected")
+    approval = db.scalar(
+        select(TradeIntentApproval).where(TradeIntentApproval.intent_id == intent.id).limit(1)
+    )
+    if approval is None:
+        raise HTTPException(status_code=409, detail="order has no approval record")
     try:
-        repo.reserve_intent(intent)
-        settings = get_settings()
-        if not settings.token_encryption_key:
-            raise AgentOSUnavailable("TOKEN_ENCRYPTION_KEY is required for Agent OS auth")
-        client = BinanceAgentOSClient.with_oauth(
-            settings.binance_agent_os_mcp_url,
-            connection.id,
-            settings.token_encryption_key,
-            f"{settings.frontend_origin.rstrip('/')}/api/integrations/binance/callback",
-            f"{settings.frontend_origin.rstrip('/')}/.well-known/darwinspot-oauth-client.json",
+        result = TradeIntentApprovalService(
+            db, default_ttl_seconds=get_settings().approval_ttl_seconds
+        ).decide(
+            approval.approval_id,
+            "APPROVE",
+            operator_user_id="WEB_OWNER",
+            operator_chat_id="WEB_OWNER",
+            source="WEB",
         )
-        catalog = ToolCatalog(await client.discover_tools())
-        state = await submit_intent(repo, client, catalog, intent)
-    except BudgetExceeded as exc:
+    except ApprovalError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except (AgentOSUnavailable, BinanceMappingError, ValueError) as exc:
-        if isinstance(exc, AgentOSAuthInvalid):
-            repo.mark_connection_unavailable(connection.id)
-            db.commit()
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"id": intent.id, "state": state, "binanceOrderId": intent.binance_order_id}
+    return {
+        "id": result.intent_id,
+        "state": result.intent_state,
+        "approvalState": result.approval_status,
+        "binanceOrderId": intent.binance_order_id,
+    }
+
+
+@router.post("/api/orders/{order_id}/reject")
+def reject_order(
+    order_id: str,
+    _: object = Depends(mutation_owner),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    repo = Repository(db)
+    intent = repo.find_intent_by_order_id(order_id)
+    if intent is None:
+        raise HTTPException(status_code=404, detail="order not found")
+    approval = db.scalar(
+        select(TradeIntentApproval).where(TradeIntentApproval.intent_id == intent.id).limit(1)
+    )
+    if approval is None:
+        raise HTTPException(status_code=409, detail="order has no approval record")
+    try:
+        result = TradeIntentApprovalService(
+            db, default_ttl_seconds=get_settings().approval_ttl_seconds
+        ).decide(
+            approval.approval_id,
+            "REJECT",
+            operator_user_id="WEB_OWNER",
+            operator_chat_id="WEB_OWNER",
+            source="WEB",
+        )
+    except ApprovalError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"id": result.intent_id, "state": result.intent_state}
+
+
+@router.get("/api/integrations/telegram/status")
+def telegram_status(_: object = Depends(current_owner)) -> dict[str, object]:
+    settings = get_settings()
+    return {
+        "configured": all(
+            (
+                settings.telegram_bot_token,
+                settings.telegram_operator_chat_id is not None,
+                settings.telegram_operator_user_id is not None,
+                settings.telegram_webhook_secret,
+            )
+        ),
+        "approvalTtlSeconds": settings.approval_ttl_seconds,
+    }
+
+
+@router.post("/api/integrations/telegram/webhook")
+async def telegram_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+    secret_token: str | None = Header(default=None, alias="X-Telegram-Bot-Api-Secret-Token"),
+) -> dict[str, object]:
+    settings = get_settings()
+    if not settings.telegram_webhook_secret or secret_token != settings.telegram_webhook_secret:
+        raise HTTPException(status_code=403, detail="Telegram webhook authentication failed")
+    try:
+        raw_update = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Telegram update must be JSON") from exc
+    update = cast(dict[str, Any], raw_update) if isinstance(raw_update, dict) else {}
+    callback = update.get("callback_query")
+    if not isinstance(callback, dict):
+        return {"status": "ignored"}
+    callback = cast(dict[str, Any], callback)
+    sender_value = callback.get("from")
+    message_value = callback.get("message")
+    data = callback.get("data")
+    sender = cast(dict[str, Any], sender_value) if isinstance(sender_value, dict) else {}
+    message = cast(dict[str, Any], message_value) if isinstance(message_value, dict) else {}
+    chat_value = message.get("chat")
+    chat = cast(dict[str, Any], chat_value) if isinstance(chat_value, dict) else {}
+    user_id = sender.get("id")
+    chat_id = chat.get("id")
+    if (
+        user_id != settings.telegram_operator_user_id
+        or chat_id != settings.telegram_operator_chat_id
+        or not isinstance(data, str)
+    ):
+        raise HTTPException(status_code=403, detail="Telegram operator is not authorized")
+    import re
+
+    match = re.fullmatch(r"(approve|reject):([0-9a-fA-F-]{36})", data)
+    if match is None:
+        raise HTTPException(status_code=400, detail="Telegram callback reference is invalid")
+    try:
+        result = TradeIntentApprovalService(
+            db, default_ttl_seconds=settings.approval_ttl_seconds
+        ).decide(
+            match.group(2),
+            "APPROVE" if match.group(1) == "approve" else "REJECT",
+            operator_user_id=str(user_id),
+            operator_chat_id=str(chat_id),
+            source="TELEGRAM",
+        )
+    except ApprovalError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    try:
+        await TelegramNotifier(settings).answer_callback(
+            str(callback.get("id", "")),
+            "Recorded" if not result.changed else result.approval_status,
+        )
+    except (TelegramDeliveryError, TelegramNotConfigured) as exc:
+        log_event("TELEGRAM_CALLBACK_ACK_FAILED", approval_id=result.approval_id)
+        raise HTTPException(status_code=503, detail="Telegram acknowledgement failed") from exc
+    log_event(
+        "TELEGRAM_APPROVAL_RECORDED",
+        approval_id=result.approval_id,
+        decision=match.group(1).upper(),
+        changed=result.changed,
+    )
+    return {
+        "status": "recorded",
+        "approvalId": result.approval_id,
+        "approvalState": result.approval_status,
+        "intentState": result.intent_state,
+    }

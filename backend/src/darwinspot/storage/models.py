@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -56,6 +56,9 @@ class MandateVersion(Base):
     entry_rules: Mapped[str] = mapped_column(Text)
     sizing_rules: Mapped[str] = mapped_column(Text)
     exit_rules: Mapped[str] = mapped_column(Text)
+    allowed_symbols: Mapped[str] = mapped_column(Text, default="[]")
+    max_order_notional: Mapped[Decimal] = mapped_column(Numeric(30, 12), default=Decimal("1"))
+    max_open_actionable_intents: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     content_hash: Mapped[str] = mapped_column(String(64))
 
@@ -101,6 +104,15 @@ class TradeIntent(Base):
     binance_order_id: Mapped[str | None] = mapped_column(String(128))
     local_state: Mapped[str] = mapped_column(String(32), default="PROPOSED")
     exchange_state: Mapped[str | None] = mapped_column(String(32))
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    supporting_factors: Mapped[str] = mapped_column(Text, default="[]")
+    risk_factors: Mapped[str] = mapped_column(Text, default="[]")
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=Decimal("0"))
+    policy_evidence: Mapped[str] = mapped_column(Text, default="{}")
+    revalidation_evidence: Mapped[str | None] = mapped_column(Text)
+    revalidation_failed_reason: Mapped[str | None] = mapped_column(Text)
+    write_request_hash: Mapped[str | None] = mapped_column(String(64))
+    external_call_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -117,3 +129,39 @@ class OrderEvent(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     payload_hash: Mapped[str] = mapped_column(String(64))
     sanitized_evidence: Mapped[str] = mapped_column(Text)
+
+
+class TradeIntentApproval(Base):
+    __tablename__ = "trade_intent_approvals"
+
+    approval_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    intent_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    operator_user_id: Mapped[str] = mapped_column(String(64))
+    operator_chat_id: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="PENDING", index=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_source: Mapped[str | None] = mapped_column(String(16))
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(128))
+    telegram_message_id: Mapped[int | None] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class OutboxMessage(Base):
+    __tablename__ = "outbox_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    dedupe_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(64), index=True)
+    aggregate_id: Mapped[str] = mapped_column(String(36), index=True)
+    payload: Mapped[str] = mapped_column(Text, default="{}")
+    status: Mapped[str] = mapped_column(String(16), default="PENDING", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_owner: Mapped[str | None] = mapped_column(String(128))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

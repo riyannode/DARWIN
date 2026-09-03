@@ -1,9 +1,10 @@
-"""Bounded worker entry point; external orchestration owns process lifetime."""
+"""Long-running DARWIN scheduler and durable-work processor."""
 
 from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx2
 import openai
@@ -15,15 +16,31 @@ from darwinspot.agent.cycle import (
     run_cycle,
 )
 from darwinspot.agent.runtime import AgentRuntime, ModelResponseError
-from darwinspot.binance.client import (
-    AgentOSAuthInvalid,
-    AgentOSUnavailable,
-    BinanceAgentOSClient,
-    UnsupportedCapability,
-)
+from darwinspot.approval.service import TradeIntentApprovalService
+from darwinspot.binance.client import AgentOSAuthInvalid, AgentOSUnavailable, UnsupportedCapability
+from darwinspot.binance.codex_transport import CodexAuthRequired, CodexTransportError
+from darwinspot.binance.factory import build_binance_client
 from darwinspot.config import Settings, get_settings
+from darwinspot.execution.approved import ApprovedExecution
+from darwinspot.notifications.outbox import (
+    EMERGENCY_CANCEL_KIND,
+    EXECUTION_KIND,
+    PROPOSAL_KIND,
+    RESULT_KIND,
+    claim_due,
+    mark_retry,
+    mark_sent,
+    mark_skipped,
+    payload,
+)
+from darwinspot.notifications.telegram import (
+    TelegramDeliveryError,
+    TelegramNotConfigured,
+    TelegramNotifier,
+)
 from darwinspot.observability import log_event
 from darwinspot.storage.database import SessionLocal
+from darwinspot.storage.models import TradeIntent, TradeIntentApproval
 from darwinspot.storage.repository import Repository
 
 _TRANSIENT_OPENAI_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
@@ -35,9 +52,8 @@ def _validate_worker_config(settings: Settings) -> None:
         name
         for name, value in (
             ("OPENAI_API_KEY", settings.openai_api_key),
-            ("TOKEN_ENCRYPTION_KEY", settings.token_encryption_key),
-            ("BINANCE_AGENT_OS_MCP_URL", settings.binance_agent_os_mcp_url),
             ("OPENAI_MODEL", settings.openai_model),
+            ("CODEX_APP_SERVER_COMMAND", settings.codex_app_server_command),
         )
         if not isinstance(value, str) or not value.strip()
     ]
@@ -52,6 +68,8 @@ def _is_transient_error(exc: BaseException) -> bool:
         exc,
         (
             AgentOSUnavailable,
+            CodexAuthRequired,
+            CodexTransportError,
             SubmissionUncertain,
             CycleUnavailable,
             ModelResponseError,
@@ -65,8 +83,7 @@ def _is_transient_error(exc: BaseException) -> bool:
     ):
         return True
     return (
-        isinstance(exc, openai.APIStatusError)
-        and exc.status_code in _TRANSIENT_OPENAI_STATUS_CODES
+        isinstance(exc, openai.APIStatusError) and exc.status_code in _TRANSIENT_OPENAI_STATUS_CODES
     )
 
 
@@ -74,39 +91,137 @@ def _backoff_seconds(failure_streak: int) -> int:
     return min(2 ** max(0, failure_streak - 1), _MAX_BACKOFF_SECONDS)
 
 
+async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_id: str) -> None:
+    data = payload(row)
+    try:
+        if row.kind == PROPOSAL_KIND:
+            intent = db.get(TradeIntent, data.get("intent_id"))
+            approval = db.get(TradeIntentApproval, data.get("approval_id"))
+            if intent is None or approval is None:
+                mark_skipped(
+                    db, message_id=row.id, worker_id=worker_id, reason="approval aggregate missing"
+                )
+                return
+            notifier = TelegramNotifier(settings)
+            delivery = await notifier.send_proposal(intent, approval)
+            approval.telegram_chat_id = delivery.chat_id
+            approval.telegram_message_id = delivery.message_id
+            db.commit()
+            mark_sent(db, message_id=row.id, worker_id=worker_id)
+            return
+        if row.kind == RESULT_KIND:
+            intent = db.get(TradeIntent, data.get("intent_id"))
+            if intent is None:
+                mark_skipped(
+                    db, message_id=row.id, worker_id=worker_id, reason="intent aggregate missing"
+                )
+                return
+            await TelegramNotifier(settings).send_result(
+                intent, str(data.get("result", intent.local_state)), data.get("reason")
+            )
+            mark_sent(db, message_id=row.id, worker_id=worker_id)
+            return
+        if row.kind == EXECUTION_KIND:
+            approval_id = data.get("approval_id")
+            if not isinstance(approval_id, str):
+                mark_skipped(
+                    db, message_id=row.id, worker_id=worker_id, reason="approval reference missing"
+                )
+                return
+            client = build_binance_client(settings, Repository(db).current_connection())
+            try:
+                result = await ApprovedExecution(Repository(db), client).execute_claimed(
+                    approval_id
+                )
+            finally:
+                transport = getattr(client, "transport", None)
+                if transport is not None:
+                    await transport.close()
+            if result.state in {"AUTH_REQUIRED", "REVALIDATION_PENDING"}:
+                mark_retry(
+                    db,
+                    message_id=row.id,
+                    worker_id=worker_id,
+                    error=result.reason or result.state,
+                    delay_seconds=30,
+                )
+            else:
+                mark_sent(db, message_id=row.id, worker_id=worker_id)
+            return
+        if row.kind == EMERGENCY_CANCEL_KIND:
+            intent_id = data.get("intent_id")
+            operator_action_id = data.get("operator_action_id")
+            if not isinstance(intent_id, str) or not isinstance(operator_action_id, str):
+                mark_skipped(
+                    db, message_id=row.id, worker_id=worker_id, reason="emergency target is invalid"
+                )
+                return
+            client = build_binance_client(settings, Repository(db).current_connection())
+            try:
+                result = await ApprovedExecution(Repository(db), client).cancel_for_emergency_stop(
+                    intent_id, operator_action_id
+                )
+            finally:
+                transport = getattr(client, "transport", None)
+                if transport is not None:
+                    await transport.close()
+            if result.state in {"AUTH_REQUIRED", "CANCEL_PENDING"}:
+                mark_retry(
+                    db,
+                    message_id=row.id,
+                    worker_id=worker_id,
+                    error=result.reason or result.state,
+                    delay_seconds=30,
+                )
+            else:
+                mark_sent(db, message_id=row.id, worker_id=worker_id)
+            return
+        mark_skipped(
+            db, message_id=row.id, worker_id=worker_id, reason="unsupported outbox work kind"
+        )
+    except (TelegramDeliveryError, TelegramNotConfigured) as exc:
+        mark_retry(db, message_id=row.id, worker_id=worker_id, error=str(exc), delay_seconds=30)
+    except (AgentOSUnavailable, CodexAuthRequired, CodexTransportError) as exc:
+        mark_retry(db, message_id=row.id, worker_id=worker_id, error=str(exc), delay_seconds=30)
+
+
+async def _process_outbox(settings: Settings) -> None:
+    worker_id = f"worker-{id(asyncio.current_task())}"
+    with SessionLocal() as db:
+        rows = claim_due(db, worker_id=worker_id, limit=20, lease_seconds=60)
+        for row in rows:
+            await _process_outbox_message(db, row, settings, worker_id)
+
+
 async def run_worker() -> None:
     settings = get_settings()
     _validate_worker_config(settings)
-    openai_api_key = settings.openai_api_key
-    token_encryption_key = settings.token_encryption_key
-    if openai_api_key is None or token_encryption_key is None:
-        raise RuntimeError("worker configuration validation did not establish required secrets")
+    if settings.openai_api_key is None:
+        raise RuntimeError("worker configuration validation did not establish OPENAI_API_KEY")
     failure_streak = 0
     while True:
         sleep_seconds = settings.agent_cycle_seconds
+        await _process_outbox(settings)
         with SessionLocal() as db:
             repo = Repository(db)
+            TradeIntentApprovalService(
+                db, default_ttl_seconds=settings.approval_ttl_seconds
+            ).expire_due()
             config = repo.claim_due_run(settings.agent_cycle_seconds)
             if config is not None:
                 run = repo.start_run("SCHEDULED", settings.openai_model)
-                connection_id: str | None = None
+                connection = repo.current_connection()
+                client: Any = None
                 try:
-                    connection = repo.current_connection()
-                    connection_id = connection.id if connection is not None else None
-                    if connection is None or connection.state != "CONNECTED":
-                        raise AgentOSUnavailable("Binance Agent OS is not connected")
+                    client = build_binance_client(settings, connection)
                     result = await asyncio.wait_for(
                         run_cycle(
                             repo,
-                            BinanceAgentOSClient.with_oauth(
-                                settings.binance_agent_os_mcp_url,
-                                connection.id,
-                                token_encryption_key,
-                                f"{settings.frontend_origin.rstrip('/')}/api/integrations/binance/callback",
-                                f"{settings.frontend_origin.rstrip('/')}/.well-known/darwinspot-oauth-client.json",
-                            ),
+                            client,
                             AgentRuntime(
-                                openai_api_key, settings.openai_model, settings.openai_base_url
+                                settings.openai_api_key,
+                                settings.openai_model,
+                                settings.openai_base_url,
                             ),
                             run.id,
                         ),
@@ -114,8 +229,8 @@ async def run_worker() -> None:
                     )
                 except Exception as exc:
                     transient = _is_transient_error(exc)
-                    if isinstance(exc, AgentOSAuthInvalid):
-                        repo.mark_connection_unavailable(connection_id)
+                    if isinstance(exc, AgentOSAuthInvalid) and connection is not None:
+                        repo.mark_connection_unavailable(connection.id)
                     repo.complete_run(run.id, "FAILED", None, str(exc))
                     if transient:
                         failure_streak += 1
@@ -140,6 +255,10 @@ async def run_worker() -> None:
                 else:
                     failure_streak = 0
                     repo.complete_run(run.id, result, None, None)
+                finally:
+                    transport = getattr(client, "transport", None)
+                    if transport is not None:
+                        await transport.close()
                 db.commit()
         await asyncio.sleep(sleep_seconds)
 

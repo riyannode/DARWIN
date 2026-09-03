@@ -359,6 +359,10 @@ New files:
 - `backend/src/darwinspot/notifications/__init__.py`
 - `backend/src/darwinspot/notifications/outbox.py`
 - `backend/src/darwinspot/notifications/telegram.py`
+- `backend/src/darwinspot/binance/codex_transport.py`
+- `backend/src/darwinspot/binance/factory.py`
+- `backend/src/darwinspot/execution/policy.py`
+- `backend/src/darwinspot/execution/approved.py`
 - `backend/migrations/versions/0003_approval_outbox.py`
 
 Changed backend files:

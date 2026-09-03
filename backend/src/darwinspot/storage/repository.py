@@ -4,9 +4,9 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,6 +19,8 @@ from darwinspot.execution.budget import (
     calculate_budget,
 )
 from darwinspot.execution.orders import SubmissionBlocked
+from darwinspot.execution.policy import ExecutionPolicy, PolicyEvaluation
+from darwinspot.notifications.outbox import PROPOSAL_KIND, enqueue_unique
 from darwinspot.observability import log_event
 from darwinspot.security.sessions import hash_session_token
 from darwinspot.storage.models import (
@@ -30,6 +32,7 @@ from darwinspot.storage.models import (
     OrderEvent,
     OwnerSession,
     TradeIntent,
+    TradeIntentApproval,
 )
 
 
@@ -79,6 +82,25 @@ class Repository:
 
     def current_mandate(self) -> MandateVersion | None:
         return self.db.scalar(select(MandateVersion).order_by(MandateVersion.created_at.desc()))
+
+    def current_policy(self) -> ExecutionPolicy | None:
+        mandate = self.current_mandate()
+        if mandate is None:
+            return None
+        try:
+            symbols = json.loads(mandate.allowed_symbols)
+        except json.JSONDecodeError as exc:
+            raise ValueError("stored mandate policy is invalid JSON") from exc
+        if not isinstance(symbols, list):
+            raise ValueError("stored mandate allowed_symbols is invalid")
+        symbol_values = cast(list[Any], symbols)
+        if not all(isinstance(item, str) for item in symbol_values):
+            raise ValueError("stored mandate allowed_symbols is invalid")
+        return ExecutionPolicy(
+            allowed_symbols=frozenset(cast(list[str], symbol_values)),
+            max_order_notional=Decimal(str(mandate.max_order_notional)),
+            max_open_actionable_intents=mandate.max_open_actionable_intents,
+        )
 
     def latest_run(self) -> AgentRun | None:
         return self.db.scalar(select(AgentRun).order_by(AgentRun.started_at.desc()).limit(1))
@@ -361,16 +383,27 @@ class Repository:
         self.db.commit()
         return version
 
-    def save_mandate(self, fields: dict[str, str]) -> MandateVersion:
+    def save_mandate(self, fields: dict[str, Any]) -> MandateVersion:
         version_id = new_idempotency_key()
+        allowed_symbols = fields["allowed_symbols"]
+        if not isinstance(allowed_symbols, list):
+            raise ValueError("allowed_symbols must be a list")
         version = MandateVersion(
             id=version_id,
             assets=fields["assets"],
             entry_rules=fields["entry_rules"],
             sizing_rules=fields["sizing_rules"],
             exit_rules=fields["exit_rules"],
+            allowed_symbols=json.dumps(allowed_symbols, sort_keys=True),
+            max_order_notional=fields["max_order_notional"],
+            max_open_actionable_intents=fields["max_open_actionable_intents"],
             created_at=now_utc(),
-            content_hash=self.content_hash(fields),
+            content_hash=self.content_hash(
+                {
+                    key: json.dumps(value, default=str, sort_keys=True)
+                    for key, value in fields.items()
+                }
+            ),
         )
         self.db.add(version)
         config = self.get_or_create_agent()
@@ -441,6 +474,11 @@ class Repository:
         budget_result: str,
         committed_notional: Decimal | None,
         initial_state: str = "SUBMITTING",
+        rationale: str = "",
+        supporting_factors: list[str] | None = None,
+        risk_factors: list[str] | None = None,
+        confidence: Decimal = Decimal("0"),
+        policy_evidence: dict[str, Any] | None = None,
     ) -> TradeIntent:
         if not quantity.is_finite() or quantity <= Decimal("0"):
             raise ValueError("order quantity must be finite and positive")
@@ -485,6 +523,11 @@ class Repository:
             budget_result=budget_result,
             committed_notional=committed_notional,
             local_state=initial_state,
+            rationale=rationale[:2000],
+            supporting_factors=json.dumps(supporting_factors or [], sort_keys=True),
+            risk_factors=json.dumps(risk_factors or [], sort_keys=True),
+            confidence=confidence,
+            policy_evidence=json.dumps(policy_evidence or {}, default=str, sort_keys=True),
             created_at=now,
             updated_at=now,
         )
@@ -498,6 +541,125 @@ class Repository:
             idempotency_key=idempotency_key,
         )
         return intent
+
+    def actionable_intent_count(self, *, exclude_intent_id: str | None = None) -> int:
+        statement = select(func.count(TradeIntent.id)).where(
+            TradeIntent.local_state.in_(
+                [
+                    "WAITING_FOR_APPROVAL",
+                    "APPROVED",
+                    "REVALIDATING",
+                    "WAITING_FOR_EXECUTION_CONFIRMATION",
+                    "SUBMITTING",
+                    "SUBMISSION_UNKNOWN",
+                    "OPEN",
+                    "PARTIALLY_FILLED",
+                    "CANCEL_PENDING",
+                ]
+            )
+        )
+        if exclude_intent_id is not None:
+            statement = statement.where(TradeIntent.id != exclude_intent_id)
+        return int(self.db.scalar(statement) or 0)
+
+    def recent_actionable_signal_exists(self, *, pair: str, side: str, since: datetime) -> bool:
+        return (
+            self.db.scalar(
+                select(TradeIntent.id)
+                .where(
+                    TradeIntent.pair == pair,
+                    TradeIntent.side == side,
+                    TradeIntent.created_at >= since,
+                    TradeIntent.local_state.in_(
+                        [
+                            "WAITING_FOR_APPROVAL",
+                            "APPROVED",
+                            "REVALIDATING",
+                            "WAITING_FOR_EXECUTION_CONFIRMATION",
+                            "SUBMITTING",
+                            "SUBMISSION_UNKNOWN",
+                            "OPEN",
+                            "PARTIALLY_FILLED",
+                            "CANCEL_PENDING",
+                        ]
+                    ),
+                )
+                .limit(1)
+            )
+            is not None
+        )
+
+    def create_waiting_intent(
+        self,
+        *,
+        run_id: str,
+        decision: dict[str, Any],
+        evaluation: PolicyEvaluation,
+        policy_evidence: dict[str, Any],
+        operator_user_id: str,
+        operator_chat_id: str,
+        ttl_seconds: int,
+        signal_since: datetime | None = None,
+    ) -> tuple[TradeIntent, TradeIntentApproval]:
+        config = self.db.scalar(select(AgentConfig).with_for_update().limit(1))
+        policy = self.current_policy()
+        if config is None or policy is None:
+            raise ValueError("agent policy is required before creating an intent")
+        if self.actionable_intent_count() >= policy.max_open_actionable_intents:
+            raise BudgetExceeded("max_open_actionable_intents reached")
+        if signal_since is not None and self.recent_actionable_signal_exists(
+            pair=str(decision["pair"]),
+            side=str(decision.get("side") or decision["action"]),
+            since=signal_since,
+        ):
+            raise BudgetExceeded("signal cooldown is active for this pair and side")
+        quantity = Decimal(str(decision["quantity"]))
+        price = Decimal(str(decision["price"])) if decision.get("price") is not None else None
+        side = str(decision.get("side") or decision["action"])
+        now = now_utc()
+        intent = TradeIntent(
+            id=new_idempotency_key(),
+            idempotency_key=new_idempotency_key(),
+            agent_run_id=run_id,
+            pair=str(decision["pair"]),
+            side=side,
+            order_type=str(decision.get("order_type") or "MARKET"),
+            quantity=quantity,
+            quote_notional=evaluation.computed_notional if side == "BUY" else None,
+            price=price,
+            budget_result=evaluation.budget_result,
+            committed_notional=evaluation.computed_notional if side == "BUY" else None,
+            local_state="WAITING_FOR_APPROVAL",
+            rationale=str(decision.get("rationale", ""))[:2000],
+            supporting_factors=json.dumps(decision.get("supporting_factors", []), sort_keys=True),
+            risk_factors=json.dumps(decision.get("risk_factors", []), sort_keys=True),
+            confidence=Decimal(str(decision.get("confidence", "0"))),
+            policy_evidence=json.dumps(policy_evidence, default=str, sort_keys=True),
+            created_at=now,
+            updated_at=now,
+        )
+        self.db.add(intent)
+        approval = TradeIntentApproval(
+            approval_id=new_idempotency_key(),
+            intent_id=intent.id,
+            operator_user_id=operator_user_id,
+            operator_chat_id=operator_chat_id,
+            created_at=now,
+            expires_at=now + timedelta(seconds=ttl_seconds),
+            status="PENDING",
+            updated_at=now,
+        )
+        self.db.add(approval)
+        enqueue_unique(
+            self.db,
+            kind=PROPOSAL_KIND,
+            aggregate_id=intent.id,
+            payload={"approval_id": approval.approval_id, "intent_id": intent.id},
+            dedupe_key=f"telegram-proposal:{approval.approval_id}",
+        )
+        self.db.commit()
+        log_event("ORDER_INTENT_PROPOSED", intent_id=intent.id, pair=intent.pair, side=intent.side)
+        return intent, approval
 
     def reserve_intent(self, intent: TradeIntent) -> None:
         """Atomically reserve a proposed buy before an external submission."""
@@ -535,9 +697,10 @@ class Repository:
         log_event("ORDER_SUBMIT_STARTED", intent_id=intent.id, pair=intent.pair, side=intent.side)
 
     def ensure_submission_allowed(self) -> None:
-        config = self.db.scalar(select(AgentConfig).with_for_update().limit(1))
+        config = self.db.scalar(select(AgentConfig).limit(1))
         if config is None or config.emergency_stop:
             raise SubmissionBlocked("emergency stop is active")
+        self.db.commit()
 
     def complete_run(
         self, run_id: str, state: str, decision: str | None, rationale: str | None

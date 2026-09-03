@@ -6,6 +6,7 @@ import { connectionSchema, type ConnectionData } from "../../lib/schemas";
 
 type ConnectResponse = {
   state: string;
+  transport?: string;
   mcpEndpoint: string;
   message: string;
   capabilities?: string[];
@@ -16,6 +17,7 @@ export default function SettingsPage() {
   const [connection, setConnection] = useState<ConnectionData | null>(null);
   const [status, setStatus] = useState("");
   const [authorizationUrl, setAuthorizationUrl] = useState("");
+  const [codexStatus, setCodexStatus] = useState<{ state: string; verification: string; tools: string[] } | null>(null);
 
   useEffect(() => {
     apiRequest<unknown>("/api/integrations/binance/status")
@@ -23,6 +25,9 @@ export default function SettingsPage() {
       .catch((error: unknown) =>
         setStatus(error instanceof Error ? error.message : "Connection state unavailable"),
       );
+    apiRequest<{ state: string; verification: string; tools: string[] }>("/api/integrations/codex/status")
+      .then(setCodexStatus)
+      .catch(() => setCodexStatus(null));
   }, []);
 
   async function connect() {
@@ -89,6 +94,12 @@ export default function SettingsPage() {
           </p>
         )}
         {status && <p className="form-status" role="status">{status}</p>}
+      </section>
+      <section className="panel">
+        <p className="eyebrow">CODEX TRANSPORT</p>
+        <h2>{codexStatus?.state ?? "UNAVAILABLE"}</h2>
+        <p className="muted">Implementation: active · Authenticated live bridge: {codexStatus?.verification ?? "UNVERIFIED"}</p>
+        {codexStatus?.tools.length ? <p className="panel-note">Discovered tools: {codexStatus.tools.join(", ")}</p> : <p className="empty-line">No authenticated Binance tools are shown. DARWIN remains safe to start, but writes stay blocked.</p>}
       </section>
       <section className="panel">
         <p className="eyebrow">CAPABILITIES</p>

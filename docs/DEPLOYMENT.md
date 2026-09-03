@@ -1,53 +1,101 @@
-# DarwinSpot deployment guide
+# DARWIN Deployment
 
-This guide describes the production shape required by the approved PRD. The build task does not deploy or enable trading.
+## Production status
 
-## Production topology
+The Codex App Server transport implementation is present and pinned to the
+inspected 0.153.0 protocol shapes. Authenticated Binance bridge verification is
+still `PENDING` until the operator completes genuine OAuth and live read-only /
+confirmation checks. Production readiness is therefore `PARTIALLY VERIFIED`.
 
-- Deploy `backend/` and `frontend/` as separate services.
-- Build the backend image once, then run it with two finite entry commands: the HTTP API and the worker.
-- Use PostgreSQL as the only stateful service. Do not use the default SQLite URL in production.
-- Serve all public traffic over HTTPS and set `FRONTEND_ORIGIN` to the exact deployed frontend origin.
-- Keep `/.well-known/darwinspot-oauth-client.json` publicly reachable on that frontend origin; it is the URL-based OAuth client metadata document used by Binance Agent OS.
-- Inject secrets through the hosting platform. Never place backend secrets in the frontend environment or client bundle.
+## Topology
+
+- Frontend and backend deploy as separate services behind HTTPS ingress.
+- PostgreSQL is the source of truth and the only coordination dependency.
+- API and worker may run as multiple replicas.
+- Worker scheduling uses the durable `AgentConfig.next_run_at` reservation.
+- Outbox claims use PostgreSQL row locks, `SKIP LOCKED`, and bounded leases.
+- Ordinary account financial writes use one PostgreSQL advisory lock per Binance
+  account.
+- No Redis, Kafka, or workflow framework is required.
+
+## Configuration
+
+Inject backend secrets through the host secret store only:
+
+```text
+DATABASE_URL
+OPENAI_API_KEY
+OPENAI_MODEL
+TOKEN_ENCRYPTION_KEY
+OWNER_PASSWORD_HASH
+FRONTEND_ORIGIN
+BINANCE_AGENT_OS_MCP_URL
+BINANCE_AGENT_OS_TRANSPORT=codex
+CODEX_APP_SERVER_COMMAND=codex app-server --stdio
+CODEX_APP_SERVER_VERSION=0.153.0
+CODEX_WRITE_CONFIRMATION_VERIFIED=false
+APPROVAL_TTL_SECONDS=90
+TELEGRAM_BOT_TOKEN
+TELEGRAM_OPERATOR_CHAT_ID
+TELEGRAM_OPERATOR_USER_ID
+TELEGRAM_WEBHOOK_SECRET
+```
+
+Keep `CODEX_WRITE_CONFIRMATION_VERIFIED=false` until the operator has observed
+the exact live Binance/Codex confirmation behavior and intentionally enabled the
+verified path. Missing Binance OAuth must not prevent API/worker startup; it
+must produce `AUTH_REQUIRED`/`NOT_AUTHENTICATED` and no write.
 
 ## Release sequence
 
-1. Build the backend image from `backend/` with the locked `pyproject.toml` and `uv.lock`.
-2. Build the frontend from `frontend/` with `BACKEND_URL` set to the HTTPS backend origin.
-3. Provision PostgreSQL and inject the backend variables from `backend/.env.example` through the host secret store.
-4. Run the migration as a bounded release step, once per release:
+1. Build the locked backend image.
+2. Build the frontend with the exact backend origin.
+3. Provision PostgreSQL.
+4. Run `PYTHONPATH=src uv run alembic upgrade head` once as a release step.
+5. Start API replicas.
+6. Start worker replicas.
+7. Verify `/health/live` and `/health/ready`.
+8. Verify owner login, Codex status, Telegram configuration state, and durable
+   activity state.
+9. Keep DARWIN in `READ_ONLY` until mandate, structured policy, budget, Telegram,
+   and manual transport verification are deliberately complete.
 
-   ```text
-   uv run alembic upgrade head
-   ```
+## Runtime guarantees
 
-5. Start the backend API with the command in `backend/Dockerfile` and start the worker from the same image with:
+- DARWIN performs autonomous monitoring, analysis, and BUY/SELL/HOLD decisions.
+- Every ordinary BUY/SELL write requires a durable explicit operator approval.
+- Telegram approval triggers fresh revalidation, not stale submission.
+- Policy admission is atomic and respects max-open intent limits.
+- One Binance account cannot perform concurrent ordinary financial writes.
+- `SUBMISSION_UNKNOWN` reconciles before retry.
+- Emergency stop remains available and queues explicit operator-command
+  cancellation work; reconciliation continues while stop is active.
+- Notification delivery state is distinct from approval existence.
+- Failed Telegram delivery never auto-executes.
 
-   ```text
-   python -m darwinspot.worker
-   ```
+## Deferred manual acceptance
 
-6. Start the frontend with the command in `frontend/Dockerfile`.
-7. Confirm the readiness gates below before connecting Binance Agent OS or enabling autonomous operation.
+Use a dedicated test bot/private chat and a controlled operator-owned account:
 
-## Readiness gates
+1. Complete genuine Binance OAuth through Codex App Server.
+2. Verify authenticated `mcpServerStatus/list`.
+3. Verify populated Binance tools.
+4. Perform an exact harmless read-only MCP call and inspect its structured
+   result.
+5. Observe the real write confirmation/elicitation contract.
+6. Decline the first write confirmation.
+7. Verify zero trade creation.
+8. Keep the status `PENDING` if any step is unavailable.
 
-Deployment is not ready until all of these are verified against the deployed services:
+Telegram has no official sandbox; do not substitute mocked acceptance.
 
-- `GET /health/live` returns `200`.
-- `GET /health/ready` returns `200` after PostgreSQL, `OWNER_PASSWORD_HASH`, `OPENAI_API_KEY`, and `TOKEN_ENCRYPTION_KEY` are injected.
-- The frontend loads the real backend connection and agent state; no seeded balances or orders appear.
-- The official Binance Agent OS OAuth flow completes and returned capabilities are inspected.
-- The OAuth metadata document and callback use the same deployed frontend origin, and Binance's `S256` PKCE flow completes.
-- One read-only market and account fetch returns live timestamps.
-- The emergency stop blocks new submissions and reports each cancellation outcome.
-- No secret, token, account identifier, or authorization header appears in client bundles or logs.
-- Trading remains disabled until the owner deliberately configures the mandate, budget, connection permissions, and operating mode.
+## Failure and rollback
 
-## Rollback and operations
+If Codex exits or authentication expires, keep the worker alive, mark transport
+unavailable, retry bounded work, and block writes. Do not fabricate exchange
+state. If a request may have crossed the external write marker, reconcile before
+retry. Roll back application images only after checking migration compatibility;
+never roll back durable financial state by deleting intents or order events.
 
-- Keep migration execution separate from API and worker startup. Roll back the application image only after confirming schema compatibility; the initial migration has a reversible downgrade for a controlled maintenance window.
-- If Agent OS becomes unavailable, leave the connection unavailable and do not substitute cached or synthetic exchange data for a new buy.
-- If a submission is uncertain, preserve `SUBMISSION_UNKNOWN` and reconcile by the stored Binance order identifier or client idempotency key before any retry.
-- Stop task-started validation servers, workers, tunnels, and temporary containers after verification. This repository task did not deploy a public service.
+Never log bot tokens, OAuth codes, bearer credentials, cookies, or Codex
+credential material.
