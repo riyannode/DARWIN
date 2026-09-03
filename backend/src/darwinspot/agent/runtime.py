@@ -11,16 +11,21 @@ from darwinspot.agent.schemas import AgentDecision, PairSelection
 from darwinspot.config import validate_openai_base_url
 
 
+class ModelResponseError(ValueError):
+    """Raised when the model response cannot be parsed or validated."""
+
+
+
 def _response_content(response: Any, operation: str) -> str:
     choices: list[object] | None = getattr(response, "choices", None)
     if not isinstance(choices, list) or not choices:
-        raise ValueError(f"model returned an invalid {operation} response")
+        raise ModelResponseError(f"model returned an invalid {operation} response")
     choice = choices[0]
     message = getattr(choice, "message", None)
     message_object: object = message
     content = getattr(message_object, "content", None)
     if not isinstance(content, str) or not content.strip():
-        raise ValueError(f"model returned an empty or invalid {operation} response")
+        raise ModelResponseError(f"model returned an empty or invalid {operation} response")
     return content
 
 
@@ -51,7 +56,9 @@ class AgentRuntime:
         try:
             return PairSelection.model_validate_json(content)
         except ValidationError as exc:
-            raise ValueError("model returned an invalid pair selection schema") from exc
+            raise ModelResponseError(
+                "model returned invalid pair selection JSON or schema"
+            ) from exc
 
     async def decide(self, evidence: dict[str, Any]) -> AgentDecision:
         response = await self.client.chat.completions.create(
@@ -66,4 +73,4 @@ class AgentRuntime:
         try:
             return AgentDecision.model_validate_json(content)
         except ValidationError as exc:
-            raise ValueError("model returned an invalid decision schema") from exc
+            raise ModelResponseError("model returned invalid decision JSON or schema") from exc

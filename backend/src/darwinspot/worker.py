@@ -14,7 +14,7 @@ from darwinspot.agent.cycle import (
     SubmissionUncertain,
     run_cycle,
 )
-from darwinspot.agent.runtime import AgentRuntime
+from darwinspot.agent.runtime import AgentRuntime, ModelResponseError
 from darwinspot.binance.client import (
     AgentOSAuthInvalid,
     AgentOSUnavailable,
@@ -54,6 +54,7 @@ def _is_transient_error(exc: BaseException) -> bool:
             AgentOSUnavailable,
             SubmissionUncertain,
             CycleUnavailable,
+            ModelResponseError,
             TimeoutError,
             httpx2.RequestError,
             httpx2.TimeoutException,
