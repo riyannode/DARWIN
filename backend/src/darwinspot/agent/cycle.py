@@ -4,15 +4,25 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from darwinspot.agent.runtime import AgentRuntime
-from darwinspot.binance.client import AgentOSUnavailable, BinanceAgentOSClient, ToolCatalog
+from darwinspot.binance.client import (
+    AgentOSAuthInvalid,
+    AgentOSUnavailable,
+    BinanceAgentOSClient,
+    ToolCatalog,
+    UnsupportedCapability,
+)
 from darwinspot.binance.mapper import (
     BinanceMappingError,
+    OrderCorrelationError,
     map_balances,
     map_mcp_result,
     map_open_orders,
     map_order_submission,
     map_recent_activity,
+    map_spot_market_universe,
     map_symbol_filters,
+    order_submission_evidence,
+    validate_order_submission_correlation,
 )
 from darwinspot.domain import new_idempotency_key
 from darwinspot.execution.budget import BudgetExceeded
@@ -27,13 +37,12 @@ class CycleUnavailable(RuntimeError):
     pass
 
 
-def _mandate_pairs(assets: str) -> set[str]:
-    tokens = "".join(character if character.isalnum() else " " for character in assets.upper())
-    return {token for token in tokens.split() if token}
+class CycleConfigurationError(CycleUnavailable):
+    pass
 
 
-def _pair_is_in_mandate(pair: str, assets: str) -> bool:
-    return pair in _mandate_pairs(assets)
+class SubmissionUncertain(AgentOSUnavailable):
+    pass
 
 
 async def run_cycle(
@@ -45,7 +54,7 @@ async def run_cycle(
     if config.emergency_stop:
         raise CycleUnavailable("emergency stop is active")
     if mandate is None or budget is None:
-        raise CycleUnavailable("mandate and budget must exist before a cycle")
+        raise CycleConfigurationError("mandate and budget must exist before a cycle")
     await reconcile_open_intents(repo, client)
     if any(
         intent.local_state in {"SUBMITTING", "SUBMISSION_UNKNOWN", "CANCEL_PENDING"}
@@ -57,8 +66,13 @@ async def run_cycle(
         raise CycleUnavailable("budget disappeared after order reconciliation")
 
     catalog = ToolCatalog(await client.discover_tools())
+    market_universe = map_spot_market_universe(
+        await client.call_tool(catalog.arguments("market_universe", {}))
+    )
+    available_pairs = {item["symbol"] for item in market_universe}
     selection = await runtime.choose_pair(
         {
+            "market_universe": market_universe,
             "mandate": {
                 "assets": mandate.assets,
                 "entry_rules": mandate.entry_rules,
@@ -72,8 +86,10 @@ async def run_cycle(
         }
     )
     pair = selection.pair
-    if not _pair_is_in_mandate(pair, mandate.assets):
-        raise CycleUnavailable("model selected a pair that is not explicitly listed in the mandate")
+    if pair not in available_pairs:
+        raise CycleUnavailable(
+            "model selected a pair that is not available in the live market universe"
+        )
 
     observed_at = datetime.now(UTC)
     market = map_mcp_result(
@@ -190,27 +206,41 @@ async def run_cycle(
         return "BUDGET_EXCEEDED"
     if config.mode == "APPROVAL_REQUIRED":
         return "PROPOSED"
-    await submit_intent(repo, client, catalog, intent)
-    return result.result
+    return await submit_intent(repo, client, catalog, intent)
 
 
 async def submit_intent(
     repo: Repository, client: BinanceAgentOSClient, catalog: ToolCatalog, intent: TradeIntent
 ) -> str:
+    upstream: Any = None
     try:
         repo.ensure_submission_allowed()
-        upstream = await client.call_tool(catalog.arguments("submit_order", {"intent": intent}))
+        submission_call = catalog.arguments("submit_order", {"intent": intent})
+        upstream = await client.call_tool(submission_call)
         submission = map_order_submission(upstream)
+        validate_order_submission_correlation(
+            upstream,
+            submission=submission,
+            expected_symbol=intent.pair,
+            expected_client_order_id=intent.idempotency_key,
+            expected_side=intent.side,
+        )
     except SubmissionBlocked:
-        if intent.binance_order_id is None:
+        if intent.local_state == "SUBMITTING" and intent.binance_order_id is None:
             intent.local_state = "PROPOSED"
             repo.db.commit()
         raise
-    except (AgentOSUnavailable, BinanceMappingError):
-        intent.local_state = "SUBMISSION_UNKNOWN"
-        repo.db.commit()
-        log_event("ORDER_SUBMIT_UNKNOWN", intent_id=intent.id, pair=intent.pair)
+    except UnsupportedCapability:
+        if intent.local_state == "SUBMITTING" and intent.binance_order_id is None:
+            intent.local_state = "PROPOSED"
+            repo.db.commit()
         raise
+    except AgentOSAuthInvalid as exc:
+        _record_submission_unknown(repo, intent, upstream, exc)
+        raise
+    except (AgentOSUnavailable, BinanceMappingError, TimeoutError) as exc:
+        _record_submission_unknown(repo, intent, upstream, exc)
+        raise SubmissionUncertain("order submission outcome is uncertain") from exc
     repo.apply_order_status(
         intent,
         order_id=submission.order_id,
@@ -218,10 +248,41 @@ async def submit_intent(
         filled_quantity=submission.executed_quantity,
         filled_notional=submission.quote_notional,
         exchange_timestamp=submission.updated_at,
-        evidence=submission.model_dump(mode="json"),
+        evidence=order_submission_evidence(
+            upstream,
+            intent_id=intent.id,
+            client_order_id=intent.idempotency_key,
+            submission=submission,
+        ),
     )
     repo.db.commit()
     return intent.local_state
+
+
+def _record_submission_unknown(
+    repo: Repository, intent: TradeIntent, upstream: Any, error: BaseException
+) -> None:
+    intent.local_state = "SUBMISSION_UNKNOWN"
+    repo.record_order_event(
+        intent=intent,
+        event_type="SUBMISSION_FAILED",
+        filled_quantity=None,
+        filled_notional=None,
+        exchange_timestamp=None,
+        evidence=order_submission_evidence(
+            upstream,
+            intent_id=intent.id,
+            client_order_id=intent.idempotency_key,
+            error=error,
+        ),
+    )
+    repo.db.commit()
+    log_event(
+        "ORDER_SUBMIT_UNKNOWN",
+        intent_id=intent.id,
+        pair=intent.pair,
+        error_code=type(error).__name__,
+    )
 
 
 async def reconcile_open_intents(repo: Repository, client: BinanceAgentOSClient) -> None:
@@ -251,6 +312,13 @@ async def reconcile_open_intents(repo: Repository, client: BinanceAgentOSClient)
                 )
             )
             status = map_order_submission(raw)
+            validate_order_submission_correlation(
+                raw,
+                submission=status,
+                expected_symbol=intent.pair,
+                expected_client_order_id=intent.idempotency_key,
+                expected_side=intent.side,
+            )
             repo.apply_order_status(
                 intent,
                 order_id=status.order_id,
@@ -258,11 +326,25 @@ async def reconcile_open_intents(repo: Repository, client: BinanceAgentOSClient)
                 filled_quantity=status.executed_quantity,
                 filled_notional=status.quote_notional,
                 exchange_timestamp=status.updated_at,
-                evidence=status.model_dump(mode="json"),
+                evidence=order_submission_evidence(
+                    raw,
+                    intent_id=intent.id,
+                    client_order_id=intent.idempotency_key,
+                    submission=status,
+                ),
             )
+        except UnsupportedCapability:
+            raise
+        except AgentOSAuthInvalid:
+            raise
+        except OrderCorrelationError as exc:
+            log_event("RECONCILIATION_FAILED", intent_id=intent.id, reason=str(exc))
+            raise SubmissionUncertain(
+                "order reconciliation response did not match the intent"
+            ) from exc
         except (AgentOSUnavailable, BinanceMappingError, ValueError) as exc:
             log_event("RECONCILIATION_FAILED", intent_id=intent.id, reason=str(exc))
-            raise
+            raise SubmissionUncertain("order reconciliation is temporarily unavailable") from exc
     repo.db.commit()
 
 
@@ -290,6 +372,27 @@ async def _cancel_target(
             )
         )
         response = map_order_submission(raw)
+        validate_order_submission_correlation(
+            raw,
+            submission=response,
+            expected_symbol=intent.pair,
+            expected_client_order_id=intent.idempotency_key,
+            expected_side=intent.side,
+        )
+    except AgentOSAuthInvalid:
+        repo.db.rollback()
+        intent = repo.find_intent_by_order_id(order_id)
+        if intent is not None:
+            intent.local_state = "CANCEL_PENDING"
+            repo.db.commit()
+        raise
+    except OrderCorrelationError as exc:
+        repo.db.rollback()
+        intent = repo.find_intent_by_order_id(order_id)
+        if intent is not None:
+            intent.local_state = "CANCEL_PENDING"
+            repo.db.commit()
+        raise SubmissionUncertain("cancel response did not match the intent") from exc
     except (AgentOSUnavailable, BinanceMappingError):
         repo.db.rollback()
         intent = repo.find_intent_by_order_id(order_id)

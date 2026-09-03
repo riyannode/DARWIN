@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, cast
@@ -15,6 +16,10 @@ from darwinspot.binance.schemas import (
 
 
 class BinanceMappingError(ValueError):
+    pass
+
+
+class OrderCorrelationError(BinanceMappingError):
     pass
 
 
@@ -154,6 +159,31 @@ def map_order_submission(payload: Any) -> OrderSubmission:
     )
 
 
+def validate_order_submission_correlation(
+    payload: Any,
+    *,
+    submission: OrderSubmission,
+    expected_symbol: str,
+    expected_client_order_id: str,
+    expected_side: str,
+) -> None:
+    """Reject an upstream order response that does not belong to this intent."""
+    if submission.symbol != expected_symbol:
+        raise OrderCorrelationError("Agent OS order response symbol did not match the intent")
+    value = _object_payload(payload)
+    returned_client_order_id = value.get("clientOrderId", value.get("client_order_id"))
+    if (
+        returned_client_order_id is not None
+        and returned_client_order_id != expected_client_order_id
+    ):
+        raise OrderCorrelationError(
+            "Agent OS order response client order ID did not match the intent"
+        )
+    returned_side = value.get("side")
+    if returned_side is not None and returned_side != expected_side:
+        raise OrderCorrelationError("Agent OS order response side did not match the intent")
+
+
 def map_balances(payload: Any, observed_at: datetime | None = None) -> BalanceSnapshot:
     value = _object_payload(payload)
     balances = value.get("balances")
@@ -283,3 +313,118 @@ def map_symbol_filters(payload: Any, observed_at: datetime | None = None) -> Sym
         normalised,
         "Agent OS symbol filters did not match Binance Spot schema",
     )
+
+
+def order_submission_evidence(
+    payload: Any,
+    *,
+    intent_id: str,
+    client_order_id: str,
+    error: BaseException | None = None,
+    submission: OrderSubmission | None = None,
+) -> dict[str, Any]:
+    """Return only allowlisted, sanitized fields retained for an order submission."""
+    value = cast(dict[str, Any], payload) if isinstance(payload, dict) else {}
+    evidence: dict[str, Any] = {
+        "intent_id": intent_id,
+        "client_order_id": value.get(
+            "clientOrderId", value.get("client_order_id", client_order_id)
+        ),
+    }
+    fields = {
+        "binance_order_id": ("orderId", "order_id"),
+        "symbol": ("symbol",),
+        "side": ("side",),
+        "status": ("status",),
+        "executed_quantity": ("executedQty", "executed_quantity"),
+        "quote_quantity": (
+            "cummulativeQuoteQty",
+            "cumulativeQuoteQty",
+            "quoteNotional",
+            "quote_notional",
+        ),
+        "timestamp": ("updateTime", "transactTime", "workingTime", "time", "updated_at"),
+    }
+    mapped_values = (
+        {
+            "binance_order_id": submission.order_id,
+            "symbol": submission.symbol,
+            "status": submission.status,
+            "executed_quantity": submission.executed_quantity,
+            "quote_quantity": submission.quote_notional,
+            "timestamp": submission.updated_at,
+        }
+        if submission is not None
+        else {}
+    )
+    for name, keys in fields.items():
+        candidate = next((value[key] for key in keys if value.get(key) is not None), None)
+        if candidate is None:
+            candidate = mapped_values.get(name)
+        if candidate is not None:
+            evidence[name] = candidate
+    if error is not None:
+        message = re.sub(
+            r"(?i)(authorization|token|secret|password|api[_-]?key)\s*[:=]\s*\S+",
+            r"\1=[redacted]",
+            str(error),
+        )
+        evidence["error_code"] = type(error).__name__
+        evidence["error_message"] = message[:512]
+    return evidence
+
+
+def map_spot_market_universe(payload: Any) -> list[dict[str, Any]]:
+    """Map live Agent OS metadata to tradable SPOT/USDT symbols only."""
+    raw_items: list[object] | None
+    if isinstance(payload, list):
+        raw_items = cast(list[object], payload)
+    elif isinstance(payload, dict):
+        value = cast(dict[str, Any], payload)
+        candidate = value.get("symbols", value.get("tickers", value.get("data")))
+        raw_items = cast(list[object], candidate) if isinstance(candidate, list) else None
+    else:
+        raw_items = None
+    if raw_items is None or not all(isinstance(item, dict) for item in raw_items):
+        raise BinanceMappingError("Agent OS market universe response did not match Spot schema")
+
+    universe: list[dict[str, Any]] = []
+    for raw_item in raw_items:
+        item = cast(dict[str, Any], raw_item)
+        symbol = item.get("symbol")
+        status = item.get("status")
+        quote_asset = item.get("quoteAsset", item.get("quote_asset"))
+        permissions = item.get("permissions")
+        spot_allowed = item.get("isSpotTradingAllowed")
+        has_spot_permission = isinstance(permissions, list) and "SPOT" in permissions
+        if (
+            not isinstance(symbol, str)
+            or not re.fullmatch(r"[A-Z0-9]{5,20}", symbol)
+            or status != "TRADING"
+            or quote_asset != "USDT"
+            or spot_allowed is False
+            or (spot_allowed is not True and not has_spot_permission)
+        ):
+            continue
+        entry: dict[str, Any] = {
+            "symbol": symbol,
+            "status": status,
+            "quote_asset": quote_asset,
+            "spot_trading_allowed": True,
+        }
+        for output, keys in {
+            "price": ("price", "lastPrice"),
+            "price_change_percent": ("priceChangePercent",),
+            "volume": ("volume",),
+            "quote_volume": ("quoteVolume",),
+            "timestamp": ("timestamp", "closeTime", "updateTime"),
+        }.items():
+            candidate = next((item[key] for key in keys if item.get(key) is not None), None)
+            if candidate is not None:
+                entry[output] = candidate
+        universe.append(entry)
+    if not universe:
+        raise BinanceMappingError(
+            "Agent OS market universe contains no live SPOT TRADING USDT symbols"
+        )
+    return universe

@@ -17,12 +17,17 @@ from sqlalchemy.orm import Session
 from darwinspot.agent.cycle import submit_intent
 from darwinspot.api.auth import current_owner, mutation_owner
 from darwinspot.binance.client import (
+    AgentOSAuthInvalid,
     AgentOSUnavailable,
     BinanceAgentOSClient,
     DatabaseOAuthStorage,
     ToolCatalog,
 )
-from darwinspot.binance.mapper import BinanceMappingError, map_order_submission
+from darwinspot.binance.mapper import (
+    BinanceMappingError,
+    map_order_submission,
+    validate_order_submission_correlation,
+)
 from darwinspot.config import get_settings
 from darwinspot.execution.budget import BudgetExceeded
 from darwinspot.observability import log_event
@@ -159,7 +164,7 @@ async def binance_connect(
             flow.error = str(exc)
             with SessionLocal() as connection_db:
                 stored = connection_db.get(BinanceConnection, connection.id)
-                if stored is not None:
+                if stored is not None and isinstance(exc, AgentOSAuthInvalid):
                     stored.state = "DISCONNECTED"
                     stored.disconnected_at = datetime.now(UTC)
                     connection_db.commit()
@@ -282,6 +287,7 @@ def orders(
             "side": row.side,
             "state": row.local_state,
             "binanceOrderId": row.binance_order_id,
+            "clientOrderId": row.idempotency_key,
         }
         for row in rows
     ]
@@ -321,6 +327,7 @@ def activity(
                 "pair": intent.pair,
                 "budgetResult": intent.budget_result,
                 "binanceOrderId": intent.binance_order_id,
+                "clientOrderId": intent.idempotency_key,
             }
             for intent in intents
         ]
@@ -382,6 +389,8 @@ def activity_detail(
             "budgetResult": intent.budget_result,
             "committedNotional": intent.committed_notional,
             "binanceOrderId": intent.binance_order_id,
+            "clientOrderId": intent.idempotency_key,
+            "intentId": intent.id,
             "budgetVersion": run.budget_version if run else None,
             "idempotencyKey": intent.idempotency_key,
             "events": [
@@ -392,6 +401,7 @@ def activity_detail(
                     "filledNotional": event.filled_notional,
                     "observedAt": event.observed_at,
                     "exchangeTimestamp": event.exchange_timestamp,
+                    "evidence": json.loads(event.sanitized_evidence),
                 }
                 for event in order_events
             ],
@@ -447,20 +457,26 @@ async def cancel_order(
         )
         catalog = ToolCatalog(await client.discover_tools())
         log_event("ORDER_CANCEL_REQUESTED", intent_id=intent.id, order_id=intent.binance_order_id)
-        response = map_order_submission(
-            await client.call_tool(
-                catalog.arguments(
-                    "cancel_order",
-                    {
-                        "symbol": intent.pair,
-                        "order_id": intent.binance_order_id,
-                        "client_order_id": intent.idempotency_key,
-                    },
-                ),
+        raw = await client.call_tool(
+            catalog.arguments(
+                "cancel_order",
+                {
+                    "symbol": intent.pair,
+                    "order_id": intent.binance_order_id,
+                    "client_order_id": intent.idempotency_key,
+                },
             )
         )
+        response = map_order_submission(raw)
+        validate_order_submission_correlation(
+            raw,
+            submission=response,
+            expected_symbol=intent.pair,
+            expected_client_order_id=intent.idempotency_key,
+            expected_side=intent.side,
+        )
     except (AgentOSUnavailable, BinanceMappingError, ValueError) as exc:
-        if isinstance(exc, AgentOSUnavailable):
+        if isinstance(exc, AgentOSAuthInvalid):
             Repository(db).mark_connection_unavailable(connection.id)
         intent.local_state = "CANCEL_PENDING"
         db.commit()
@@ -519,7 +535,7 @@ async def approve_order(
     except BudgetExceeded as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (AgentOSUnavailable, BinanceMappingError, ValueError) as exc:
-        if isinstance(exc, AgentOSUnavailable):
+        if isinstance(exc, AgentOSAuthInvalid):
             repo.mark_connection_unavailable(connection.id)
             db.commit()
         raise HTTPException(status_code=503, detail=str(exc)) from exc

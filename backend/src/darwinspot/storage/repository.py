@@ -546,8 +546,10 @@ class Repository:
         if run is None:
             raise ValueError("agent run not found")
         run.result_state = state
-        run.decision = decision
-        run.rationale = rationale
+        if decision is not None:
+            run.decision = decision
+        if rationale is not None:
+            run.rationale = rationale
         run.completed_at = now_utc()
         self.db.commit()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import AsyncGenerator, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -10,7 +11,7 @@ from typing import Any, cast
 import httpx2
 from jsonschema import Draft202012Validator, SchemaError
 from mcp import ClientSession
-from mcp.client.auth import OAuthClientProvider, TokenStorage
+from mcp.client.auth import OAuthClientProvider, OAuthFlowError, OAuthTokenError, TokenStorage
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 from pydantic import AnyUrl, TypeAdapter
@@ -27,6 +28,39 @@ class AgentOSUnavailable(RuntimeError):
 
 class UnsupportedCapability(AgentOSUnavailable):
     pass
+
+
+class AgentOSAuthInvalid(AgentOSUnavailable):
+    pass
+
+
+def _is_auth_invalid(exc: BaseException) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, OAuthTokenError):
+            status_match = re.search(r"\((\d{3})\)", str(current))
+            if status_match is not None and int(status_match.group(1)) >= 500:
+                return False
+            return True
+        if isinstance(current, httpx2.HTTPStatusError):
+            response = current.response
+            if response.status_code == 401:
+                return True
+            if response.status_code == 403:
+                challenge = response.headers.get("WWW-Authenticate", "").lower()
+                if "invalid_token" in challenge or "revoked" in challenge:
+                    return True
+        if isinstance(current, OAuthFlowError):
+            message = str(current).lower()
+            if "no redirect handler" in message or "no authorization code" in message:
+                return True
+        message = str(current).lower()
+        if "invalid_token" in message or "invalid_grant" in message or "revoked" in message:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 @dataclass(frozen=True)
@@ -115,6 +149,14 @@ class ToolCatalog:
         "leverage",
     )
     _patterns = {
+        "market_universe": (
+            "exchange information",
+            "exchange_info",
+            "exchangeinfo",
+            "all symbols",
+            "ticker",
+            "market data",
+        ),
         "market": ("ticker", "price", "market data", "kline"),
         "balances": ("balance", "account"),
         "open_orders": ("open order", "open_orders", "openorders"),
@@ -163,6 +205,8 @@ class ToolCatalog:
         candidates: list[tuple[int, ToolDescriptor]] = []
         for tool in self.tools:
             if not self.is_permitted(tool.name, tool.description):
+                continue
+            if operation == "market_universe" and "symbol" in self._required(tool):
                 continue
             text = f"{tool.name} {tool.description}".lower()
             if operation == "submit_order" and "test" in text:
@@ -254,7 +298,9 @@ class ToolCatalog:
     def arguments(self, operation: str, values: Mapping[str, Any]) -> ToolCall:
         tool = self.resolve(operation)
         arguments: dict[str, Any] = {}
-        if operation in {"market", "symbol_filters", "open_orders"}:
+        if operation == "market_universe":
+            pass
+        elif operation in {"market", "symbol_filters", "open_orders"}:
             self._put(
                 tool,
                 arguments,
@@ -382,7 +428,13 @@ class BinanceAgentOSClient:
                     async with client:
                         await client.initialize()
                         yield client
+        except AgentOSAuthInvalid:
+            raise
         except Exception as exc:
+            if _is_auth_invalid(exc):
+                raise AgentOSAuthInvalid(
+                    "Binance Agent OS authorization is invalid or revoked"
+                ) from exc
             raise AgentOSUnavailable("Binance Agent OS MCP session is unavailable") from exc
 
     async def discover_tools(self) -> list[ToolDescriptor]:

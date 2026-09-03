@@ -6,7 +6,7 @@ DarwinSpot is an owner-operated Binance Agent OS spot-trading agent whose model 
 
 ## Short description
 
-DarwinSpot connects one owner to one dedicated Binance Agent OS Agentic sub-account for spot trading. The agent reads live market and account evidence, selects one spot pair explicitly listed in the owner mandate, and returns one typed `HOLD`, `BUY`, `SELL`, `CANCEL`, or `CANCEL_REPLACE` decision. The backend—not the model—calculates buy notional, reserves the rolling 24-hour budget, builds the Binance Spot order payload, records durable intent, reconciles uncertain submissions, and keeps every decision linked to evidence and exchange state.
+DarwinSpot connects one owner to one dedicated Binance Agent OS Agentic sub-account for spot trading. The agent reads a live SPOT/TRADING/USDT market universe and account evidence, selects one available spot pair using the owner mandate as strategy constraints, and returns one typed `HOLD`, `BUY`, `SELL`, `CANCEL`, or `CANCEL_REPLACE` decision. The backend—not the model—calculates buy notional, reserves the rolling 24-hour budget, builds the Binance Spot order payload, records durable intent, reconciles uncertain submissions, and keeps every decision linked to evidence and exchange state.
 
 The UI exposes only `Available Budget` and `Spent Amount` as budget usage values. The owner can use `READ_ONLY`, `APPROVAL_REQUIRED`, or `AUTO_BOUNDED`, and can activate an emergency stop that blocks new submissions and requests cancellation of known DarwinSpot orders.
 
@@ -16,7 +16,7 @@ Unbounded AI trading prompts are not execution boundaries. DarwinSpot separates 
 
 - Binance Agent OS is connected through its official MCP Streamable HTTP endpoint and OAuth authorization-code flow with PKCE.
 - Tool names and input schemas are discovered from the connected MCP server; unsupported or ambiguous capabilities fail closed.
-- The model chooses one exact uppercase spot pair from the pairs written in the mandate. The backend rejects a pair not explicitly present in the mandate and fetches market data and symbol filters for that selected pair.
+- The model chooses one exact uppercase spot pair from the live Agent OS market universe. The backend filters that universe to available SPOT/TRADING/USDT symbols, rejects a selection absent from it, and fetches market data and symbol filters for the selected pair.
 - Buy spending is governed by one rolling 24-hour budget. `Spent Amount` is verified buy fills from the previous 24 hours plus quote value committed to open buy orders. Sells and cancellations do not consume the budget.
 - Limit buys use backend-computed `quantity × price`. Market buys use backend-computed `quoteOrderQty` as the spending ceiling and never send `quantity` together with it. Market sells send `quantity` only.
 - Decimal values are serialized safely, `None`/`null` fields are omitted, and Binance Spot identifiers use `newClientOrderId`, `orderId`, and `origClientOrderId` according to the discovered tool schema.
