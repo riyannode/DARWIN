@@ -6,6 +6,20 @@ From `backend/`: `uv sync --frozen`, set secrets from `.env.example`, then run `
 
 From `frontend/`: `pnpm install --frozen-lockfile`, then `BACKEND_URL=http://127.0.0.1:8000 pnpm build`. A temporary `pnpm dev` process is only for visual review and must be stopped afterward.
 
+## Optional OpenAI-compatible LLM gateway
+
+DarwinSpot uses OpenAI by default. Set `OPENAI_BASE_URL` only when routing the existing OpenAI SDK through a compatible gateway such as 9Router; `OPENAI_API_KEY` and `OPENAI_MODEL` remain backend-only settings:
+
+```dotenv
+OPENAI_BASE_URL=http://localhost:20128/v1
+OPENAI_API_KEY=<key dari dashboard 9Router>
+OPENAI_MODEL=<model yang tersedia di dashboard>
+```
+
+The base URL is validated as an absolute HTTP(S) URL. An empty key/model, invalid URL, malformed response, or response that fails the expected decision schema fails explicitly; DarwinSpot does not silently switch provider or model. Do not copy 9Router source into DarwinSpot.
+
+When DarwinSpot runs inside a container, `localhost` points to that container itself. On a VPS/Docker deployment, use the reachable 9Router hostname (and port) instead, for example the Docker service name or an address resolvable from the DarwinSpot backend container.
+
 ## Readiness sequence
 
 1. Confirm `/health/live`.

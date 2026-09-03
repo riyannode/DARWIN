@@ -104,7 +104,9 @@ async def run_worker() -> None:
                                 f"{settings.frontend_origin.rstrip('/')}/api/integrations/binance/callback",
                                 f"{settings.frontend_origin.rstrip('/')}/.well-known/darwinspot-oauth-client.json",
                             ),
-                            AgentRuntime(openai_api_key, settings.openai_model),
+                            AgentRuntime(
+                                openai_api_key, settings.openai_model, settings.openai_base_url
+                            ),
                             run.id,
                         ),
                         timeout=60,

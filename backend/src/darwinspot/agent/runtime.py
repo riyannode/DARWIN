@@ -4,14 +4,38 @@ import json
 from typing import Any
 
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 
 from darwinspot.agent.prompts import PAIR_SELECTION_PROMPT, SYSTEM_PROMPT
 from darwinspot.agent.schemas import AgentDecision, PairSelection
+from darwinspot.config import validate_openai_base_url
+
+
+def _response_content(response: Any, operation: str) -> str:
+    choices: list[object] | None = getattr(response, "choices", None)
+    if not isinstance(choices, list) or not choices:
+        raise ValueError(f"model returned an invalid {operation} response")
+    choice = choices[0]
+    message = getattr(choice, "message", None)
+    message_object: object = message
+    content = getattr(message_object, "content", None)
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError(f"model returned an empty or invalid {operation} response")
+    return content
 
 
 class AgentRuntime:
-    def __init__(self, api_key: str, model: str) -> None:
-        self.client = AsyncOpenAI(api_key=api_key)
+    def __init__(self, api_key: str, model: str, base_url: str | None = None) -> None:
+        if not api_key.strip():
+            raise ValueError("OPENAI_API_KEY must not be empty")
+        if not model.strip():
+            raise ValueError("OPENAI_MODEL must not be empty")
+        validate_openai_base_url(base_url)
+        self.client = (
+            AsyncOpenAI(api_key=api_key, base_url=base_url)
+            if base_url is not None
+            else AsyncOpenAI(api_key=api_key)
+        )
         self.model = model
 
     async def choose_pair(self, evidence: dict[str, Any]) -> PairSelection:
@@ -23,10 +47,11 @@ class AgentRuntime:
             ],
             response_format={"type": "json_object"},
         )
-        content = response.choices[0].message.content
-        if not content:
-            raise ValueError("model returned an empty pair selection")
-        return PairSelection.model_validate_json(content)
+        content = _response_content(response, "pair selection")
+        try:
+            return PairSelection.model_validate_json(content)
+        except ValidationError as exc:
+            raise ValueError("model returned an invalid pair selection schema") from exc
 
     async def decide(self, evidence: dict[str, Any]) -> AgentDecision:
         response = await self.client.chat.completions.create(
@@ -37,7 +62,8 @@ class AgentRuntime:
             ],
             response_format={"type": "json_object"},
         )
-        content = response.choices[0].message.content
-        if not content:
-            raise ValueError("model returned an empty decision")
-        return AgentDecision.model_validate_json(content)
+        content = _response_content(response, "decision")
+        try:
+            return AgentDecision.model_validate_json(content)
+        except ValidationError as exc:
+            raise ValueError("model returned an invalid decision schema") from exc
