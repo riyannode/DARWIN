@@ -45,10 +45,8 @@ The full fork, configuration, migration, Agent OS, operating-mode, health-check,
 git clone https://github.com/YOUR_GITHUB_USERNAME/DARWIN.git
 cd DARWIN
 
-# Use the latest PR #2 branch from the upstream repository.
-git remote add upstream https://github.com/riyannode/DARWIN.git
-git fetch upstream pull/2/head:darwinspot-pr-2
-git switch darwinspot-pr-2
+# The judge replication guide is on main after PR #2 is merged.
+git status --short --branch
 
 cp backend/.env.example backend/.env
 chmod 600 backend/.env
@@ -68,12 +66,26 @@ OPENAI_MODEL=<a model available in the 9Router dashboard>
 
 When DarwinSpot runs in a container, `localhost` points to that container. Use a 9Router hostname reachable from the backend container instead.
 
+## Verification status
+
+Verified in this workspace: locked backend/frontend dependency installation, production frontend build, PostgreSQL migration, backend `/health/live` and `/health/ready`, frontend route responses, owner login/session, and the local 9Router `/v1/models` catalog. A clean-fork replication, full public HTTPS Binance Agent OS OAuth flow, live LLM completion, and live order have not been verified here.
+
+## Project sources
+
+- [Binance Agent OS Mini Hackathon announcement](https://x.com/binance/status/2094810011557838988)
+- [Binance submission survey](https://app.binance.com/uni-qr/user-survey/2913aa200aac462c89a737779393f3d4)
+- [9Router source](https://github.com/decolua/9router)
+
 ## Demo
 
-[Video demo — link pending](VIDEO_DEMO_URL)
+Video demo: pending before submission.
 
 No hosted application URL is required by the hackathon submission. The repository, replication guide, and demo video are the primary Track A deliverables.
 
-## Security and live-use boundary
+## Local demo and full Agent OS OAuth
+
+The local replication path is a local build/health/UI demonstration. It binds the backend and frontend to loopback and does not claim that the official Binance Agent OS OAuth flow is complete.
+
+The full Agent OS OAuth path is separate: it requires a public **HTTPS** `FRONTEND_ORIGIN`, with both `/.well-known/darwinspot-oauth-client.json` and the OAuth callback publicly reachable on that same origin. A `127.0.0.1` or plain HTTP origin is suitable for the local demo only, not for full public OAuth.
 
 Use credentials belonging to the operator running the fork. Keep `backend/.env` outside git and never put backend secrets in `frontend/.env` or a client bundle. Start in `READ_ONLY`, inspect the real Agent OS capabilities and timestamps, and enable execution only after deliberately configuring the mandate, budget, permissions, and operating mode.

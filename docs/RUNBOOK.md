@@ -2,27 +2,28 @@
 
 This runbook reproduces DarwinSpot locally from the repository. It uses only operator-owned credentials, the official Binance Agent OS MCP endpoint, PostgreSQL, and either direct OpenAI or an OpenAI-compatible gateway such as 9Router.
 
+## Verification boundary
+
+Verified in this workspace: dependency installation, production frontend build, PostgreSQL migration, backend `/health/live` and `/health/ready`, frontend route responses, owner login/session, and the local 9Router `/v1/models` catalog. A clean-fork replication, full public HTTPS Binance Agent OS OAuth flow, live LLM completion, and live order have not been verified here.
+
 The commands below are intended for a Linux host. Run the backend API, worker, and frontend in separate terminals. The API and worker commands include `PYTHONPATH=src` because this repository keeps Python source under `backend/src/`.
 
 ## 1. Fork and clone
 
-Fork `https://github.com/riyannode/DARWIN` in GitHub, then clone your fork:
+Fork `https://github.com/riyannode/DARWIN` in GitHub, then clone your fork after PR #2 is merged:
 
 ```bash
 git clone https://github.com/YOUR_GITHUB_USERNAME/DARWIN.git
 cd DARWIN
 ```
 
-Use the latest open PR #2 branch for this replication:
+Confirm the clone is on the default `main` branch:
 
 ```bash
-git remote add upstream https://github.com/riyannode/DARWIN.git
-git fetch upstream pull/2/head:darwinspot-pr-2
-git switch darwinspot-pr-2
 git status --short --branch
 ```
 
-Expected result: the branch is `darwinspot-pr-2` and the working tree is clean.
+Expected result: the branch is `main` and the working tree is clean.
 
 ## 2. Prerequisites
 
@@ -74,7 +75,9 @@ Put the Fernet output in `TOKEN_ENCRYPTION_KEY`. Put the Argon2id output in `OWN
 Create a local PostgreSQL role and database if they do not already exist. Choose a local password and keep it only in the environment file or your local secret store:
 
 ```bash
-sudo -u postgres psql -c "CREATE ROLE darwinspot LOGIN PASSWORD 'CHOOSE_A_LOCAL_DATABASE_PASSWORD';"
+read -rsp "PostgreSQL password: " DB_PASSWORD; printf '\n'
+sudo -u postgres psql -c "CREATE ROLE darwinspot LOGIN PASSWORD '${DB_PASSWORD}';"
+unset DB_PASSWORD
 sudo -u postgres createdb -O darwinspot darwinspot
 ```
 
@@ -84,6 +87,12 @@ Set `DATABASE_URL` in `backend/.env` using the role, password, host, port, and d
 
 ```dotenv
 DATABASE_URL=postgresql+psycopg://darwinspot:<local-database-password>@127.0.0.1:5432/darwinspot
+```
+
+For the local demo, set the frontend origin to loopback:
+
+```dotenv
+FRONTEND_ORIGIN=http://127.0.0.1:3000
 ```
 
 ## 4. Configure direct OpenAI or 9Router
@@ -121,6 +130,10 @@ unset ROUTER_API_KEY
 If DarwinSpot runs in Docker or another container, `localhost` means the DarwinSpot container itself. Set `OPENAI_BASE_URL` to the 9Router hostname and port reachable from that container. Do not copy 9Router source into DarwinSpot.
 
 The backend validates the base URL, rejects empty key/model values, and fails explicitly on malformed or schema-invalid model responses. It does not silently fall back to another provider or model.
+
+The local replication path is a local build/health/UI demonstration. It binds the backend and frontend to loopback and uses `FRONTEND_ORIGIN=http://127.0.0.1:3000`. It does not claim that the official Binance Agent OS OAuth flow is complete.
+
+The full Agent OS OAuth path is separate: it requires a public **HTTPS** `FRONTEND_ORIGIN`, with both `/.well-known/darwinspot-oauth-client.json` and the OAuth callback publicly reachable on that same origin. A `127.0.0.1` or plain HTTP origin is suitable for the local demo only, not for full public OAuth.
 
 ## 5. Install dependencies
 
@@ -177,7 +190,7 @@ Open three terminals in the repository root.
 
 ```bash
 cd backend
-PYTHONPATH=src uv run uvicorn darwinspot.main:app --host 0.0.0.0 --port 8000
+PYTHONPATH=src uv run uvicorn darwinspot.main:app --host 127.0.0.1 --port 8000
 ```
 
 **Terminal B — worker/agent:**
@@ -191,7 +204,7 @@ PYTHONPATH=src uv run python -m darwinspot.worker
 
 ```bash
 cd frontend
-HOSTNAME=0.0.0.0 PORT=3000 pnpm start
+HOSTNAME=127.0.0.1 PORT=3000 pnpm start
 ```
 
 The worker is a separate long-running process. It remains idle until the persisted agent configuration makes a scheduled run due; starting it does not submit an order.
@@ -296,7 +309,7 @@ Run backend commands with the source path from the backend directory:
 
 ```bash
 cd backend
-PYTHONPATH=src uv run uvicorn darwinspot.main:app --host 0.0.0.0 --port 8000
+PYTHONPATH=src uv run uvicorn darwinspot.main:app --host 127.0.0.1 --port 8000
 PYTHONPATH=src uv run python -m darwinspot.worker
 ```
 
