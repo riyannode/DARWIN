@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+
+.ruff_cache/
+.pyright/
+darwinspot.db
+.next/
+node_modules/
+*.log
