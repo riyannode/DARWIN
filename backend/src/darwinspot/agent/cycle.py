@@ -212,10 +212,10 @@ async def run_cycle(
 async def submit_intent(
     repo: Repository, client: BinanceAgentOSClient, catalog: ToolCatalog, intent: TradeIntent
 ) -> str:
-    repo.ensure_submission_allowed()
-    submission_call = catalog.arguments("submit_order", {"intent": intent})
     upstream: Any = None
     try:
+        repo.ensure_submission_allowed()
+        submission_call = catalog.arguments("submit_order", {"intent": intent})
         upstream = await client.call_tool(submission_call)
         submission = map_order_submission(upstream)
         validate_order_submission_correlation(
@@ -226,11 +226,14 @@ async def submit_intent(
             expected_side=intent.side,
         )
     except SubmissionBlocked:
-        if intent.binance_order_id is None:
+        if intent.local_state == "SUBMITTING" and intent.binance_order_id is None:
             intent.local_state = "PROPOSED"
             repo.db.commit()
         raise
     except UnsupportedCapability:
+        if intent.local_state == "SUBMITTING" and intent.binance_order_id is None:
+            intent.local_state = "PROPOSED"
+            repo.db.commit()
         raise
     except AgentOSAuthInvalid as exc:
         _record_submission_unknown(repo, intent, upstream, exc)
@@ -330,6 +333,8 @@ async def reconcile_open_intents(repo: Repository, client: BinanceAgentOSClient)
                     submission=status,
                 ),
             )
+        except UnsupportedCapability:
+            raise
         except AgentOSAuthInvalid:
             raise
         except OrderCorrelationError as exc:
