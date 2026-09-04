@@ -234,7 +234,6 @@ const showcaseEvidenceSchema = z.object({
     selectedPair: z.string().nullable(),
     candidateSymbols: z.array(z.string()),
     effectiveSymbols: z.array(z.string()),
-    candidateHistory: z.record(z.string(), z.record(z.string(), showcaseHistorySchema)),
     candidateFailures: z.record(z.string(), z.string()),
   }),
   selectedPair: z.object({
@@ -264,6 +263,21 @@ const showcaseRunSchema = z.object({
   reason: z.string().nullable(),
   evidence: showcaseEvidenceSchema,
 });
+const showcaseRunSummarySchema = z.object({
+  id: z.string(),
+  trigger: z.enum(["SCHEDULED", "RUN_ONCE"]),
+  model: z.string(),
+  state: z.string(),
+  startedAt: z.string(),
+  completedAt: z.string().nullable(),
+  decision: z.object({
+    action: z.enum(["BUY", "SELL", "HOLD"]).nullable().optional(),
+    pair: z.string().nullable().optional(),
+    confidence: z.string().nullable().optional(),
+  }),
+  systemOutcome: z.string(),
+  reason: z.string().nullable(),
+});
 export const showcaseSchema = z.object({
   showcaseState: z.enum(["AVAILABLE", "STALE"]),
   demoMode: z.literal(false),
@@ -281,7 +295,8 @@ export const showcaseSchema = z.object({
   stale: z.boolean(),
   staleReason: z.string().nullable(),
   latestDecision: showcaseRunSchema.nullable(),
-  recentDecisions: showcaseRunSchema.array(),
+  recentDecisions: showcaseRunSummarySchema.array(),
 });
 export type ShowcaseData = z.infer<typeof showcaseSchema>;
 export type ShowcaseRun = z.infer<typeof showcaseRunSchema>;
+export type ShowcaseRunSummary = z.infer<typeof showcaseRunSummarySchema>;

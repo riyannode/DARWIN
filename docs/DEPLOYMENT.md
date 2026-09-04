@@ -26,7 +26,8 @@ operator APIs and every mutation remain owner-authenticated.
 | Exact localhost:3000 judge path | VERIFIED on a clean port-3000 re-test |
 | AUTO_BOUNDED implementation | Present; funded live-order acceptance NOT VERIFIED |
 | HUMAN_APPROVAL implementation | Present; genuine authenticated Codex/Binance acceptance PENDING / NOT VERIFIED |
-| Chromium/browser pixel verification | DEFERRED / UNVERIFIED |
+| Judge-facing `/demo` and public-enabled `/showcase` Chromium rendering | VERIFIED |
+| Full operator/control-room browser acceptance | NOT CLAIMED / not exhaustively verified |
 | Fully production-verified live trading | Not claimed |
 
 No funded Binance order, withdrawal, transfer, or live Codex financial
@@ -76,8 +77,10 @@ This Compose file is not the production live-trading deployment.
 LIVE requires `DEMO_MODE=false` and the common settings in `LIVE.md`.
 
 - `AUTO_BOUNDED` uses the backend Binance Spot API with a dedicated
-  `BINANCE_API_KEY` and `BINANCE_API_SECRET`. It does not require per-order
-  human approval, Codex OAuth, or `TOKEN_ENCRYPTION_KEY` for its readiness path.
+  `BINANCE_API_KEY` and `BINANCE_API_SECRET`. A full decision cycle requires
+  these authenticated account reads in addition to public market OHLCV. It does
+  not require per-order human approval, Codex OAuth, or `TOKEN_ENCRYPTION_KEY`
+  for its readiness path.
 - `HUMAN_APPROVAL` uses Codex App Server and Binance Agent OS MCP. It requires
   `TOKEN_ENCRYPTION_KEY` for persisted connection/OAuth material and genuine
   Codex-managed Binance Agent OS OAuth. It does not use

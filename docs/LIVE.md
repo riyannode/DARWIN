@@ -26,10 +26,12 @@ PUBLIC_SHOWCASE_ENABLED=true
 ```
 
 Real LLM inference, real public Binance market evidence, real scheduled worker
-cycles, persisted AgentRun decisions, and public read-only `/showcase`. No real
-financial write is allowed; a policy-passing BUY/SELL completes the cycle as a
-local `FINANCIAL_WRITES_DISABLED` safe-live outcome before any intent or proposal
-is created. No owner login is required for `/showcase`.
+cycles, persisted AgentRun decisions, and public read-only `/showcase`. A full
+`AUTO_BOUNDED` cycle also requires authenticated Binance account reads; the
+public projection intentionally excludes private balances. No real financial
+write is allowed; a policy-passing BUY/SELL completes the cycle as a local
+`FINANCIAL_WRITES_DISABLED` safe-live outcome before any intent or proposal is
+created. No owner login is required for `/showcase`.
 
 ### REAL LIVE TRADING
 
@@ -276,7 +278,8 @@ Implementation is present, but live provider acceptance is not claimed:
 - AUTO_BOUNDED funded live order acceptance: NOT VERIFIED.
 - HUMAN_APPROVAL genuine authenticated Codex/Binance acceptance: PENDING /
   NOT VERIFIED.
-- Chromium/browser pixel verification: DEFERRED / UNVERIFIED.
+- **Judge-facing `/demo` and public-enabled `/showcase` Chromium rendering:** VERIFIED.
+- **Full operator/control-room browser acceptance:** NOT CLAIMED / not exhaustively verified.
 
 Do not submit a funded order, withdrawal, transfer, or live Codex financial
 confirmation as part of documentation verification.

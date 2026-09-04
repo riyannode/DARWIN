@@ -521,13 +521,12 @@ def activity_detail(
 ) -> dict[str, object]:
     run = db.get(AgentRun, activity_id)
     if run is not None:
+        is_decision = run.trigger_type in {"SCHEDULED", "RUN_ONCE"}
         return {
             "id": run.id,
-            "type": "audit"
-            if run.trigger_type in {"BUDGET_INCREASED", "EMERGENCY_STOP_CLEARED"}
-            else "decision",
+            "type": "decision" if is_decision else "audit",
             "trigger": run.trigger_type,
-            "decision": json.loads(run.decision) if run.decision else None,
+            "decision": json.loads(run.decision) if is_decision and run.decision else None,
             "rationale": run.rationale,
             "evidence": run.evidence_timestamps,
             "mandateVersion": run.mandate_version,

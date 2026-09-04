@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { OhlcvChart } from "../../components/ohlcv-chart";
 import { apiRequest } from "../../lib/api";
-import { showcaseSchema, type ShowcaseData, type ShowcaseRun } from "../../lib/schemas";
+import { showcaseSchema, type ShowcaseData, type ShowcaseRun, type ShowcaseRunSummary } from "../../lib/schemas";
 
 function confidence(value: string | null | undefined): string {
   return value ? `${Math.round(Number(value) * 100)}%` : "—";
@@ -24,7 +24,7 @@ function Factors({ run }: { run: ShowcaseRun }) {
   </div>;
 }
 
-function RunRow({ run }: { run: ShowcaseRun }) {
+function RunRow({ run }: { run: ShowcaseRunSummary }) {
   return <div className="showcase-run-row">
     <div><strong>{run.decision.pair ?? "No pair"}</strong><span>{run.trigger} · <Timestamp value={run.completedAt} /></span></div>
     <div><DecisionBadge action={run.decision.action} /><span className="feed-outcome">{run.systemOutcome}</span></div>

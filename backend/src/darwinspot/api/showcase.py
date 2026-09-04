@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -47,11 +48,69 @@ _REDACT_ACCOUNT_VALUE = re.compile(
 )
 
 
-def _public_text(value: Any, *, max_length: int = 2000) -> str:
+def _public_text(
+    value: Any,
+    *,
+    max_length: int = 2000,
+    private_account_values: tuple[tuple[str, str], ...] = (),
+) -> str:
     text = value if isinstance(value, str) else str(value)
     text = _REDACT_PRIVATE_VALUE.sub("[REDACTED]", text)
     text = _REDACT_ACCOUNT_VALUE.sub("[REDACTED PRIVATE ACCOUNT DETAIL]", text)
+    account_terms = (
+        "available",
+        "hold",
+        "holds",
+        "holding",
+        "holdings",
+        "own",
+        "owns",
+        "have",
+        "has",
+        "free",
+        "locked",
+        "balance",
+        "balances",
+        "account",
+        "portfolio",
+        "wallet",
+        "equity",
+        "funds",
+    )
+    term_pattern = "|".join(account_terms)
+    for asset, numeric_value in private_account_values:
+        escaped_value = re.escape(numeric_value)
+        text = re.sub(
+            rf"(?i)(?:\b(?:{term_pattern})\b[^\n.;,]{{0,80}}?{escaped_value}(?:\s+{re.escape(asset)})?"
+            rf"|{escaped_value}(?:\s+{re.escape(asset)})?[^\n.;,]{{0,80}}?\b(?:{term_pattern})\b)",
+            "[REDACTED PRIVATE ACCOUNT VALUE]",
+            text,
+        )
     return text[:max_length]
+
+
+def _private_account_values(evidence: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    final_decision = _object(evidence.get("final_decision"))
+    balances = _object(final_decision.get("balances"))
+    values: set[tuple[str, str]] = set()
+    for raw_balance in _list(balances.get("balances")):
+        balance = _object(raw_balance)
+        asset = balance.get("asset")
+        if not isinstance(asset, str) or not asset:
+            continue
+        for field in ("free", "locked"):
+            raw_value = balance.get(field)
+            if not isinstance(raw_value, (str, int, float)):
+                continue
+            numeric_value = str(raw_value)
+            values.add((asset, numeric_value))
+            try:
+                decimal_value = Decimal(numeric_value)
+            except InvalidOperation:
+                continue
+            values.add((asset, format(decimal_value, "f")))
+            values.add((asset, format(decimal_value.normalize(), "f")))
+    return tuple(sorted(values, key=lambda item: len(item[1]), reverse=True))
 
 
 def _object(value: Any) -> dict[str, Any]:
@@ -131,11 +190,6 @@ def _safe_market(value: Any) -> dict[str, str]:
 def _safe_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
     pair_selection = _object(evidence.get("pair_selection"))
     final_decision = _object(evidence.get("final_decision"))
-    candidate_history: dict[str, Any] = {}
-    for symbol, value in _object(pair_selection.get("candidate_history")).items():
-        histories = _safe_history_map(value, ("15m", "1h"))
-        if histories:
-            candidate_history[symbol] = histories
     candidate_failures = {
         symbol: error
         for symbol, error in _object(pair_selection.get("candidate_failures")).items()
@@ -150,7 +204,6 @@ def _safe_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
             ),
             "candidateSymbols": _string_list(pair_selection.get("candidate_symbols")),
             "effectiveSymbols": _string_list(pair_selection.get("effective_symbols")),
-            "candidateHistory": candidate_history,
             "candidateFailures": candidate_failures,
         },
         "selectedPair": {
@@ -208,21 +261,29 @@ def _policy(run: AgentRun, intent: TradeIntent | None, action: str | None) -> di
             "reason": "deterministic policy passed before financial write closure",
             "reasonCode": "FINANCIAL_WRITES_DISABLED",
             "checks": checks,
+            "computedNotional": stored.get("computed_notional")
+            if isinstance(stored.get("computed_notional"), str)
+            else None,
         }
     if run.result_state == "POLICY_REJECTED":
         stored = _object(_run_json(run.evidence_timestamps).get("policy"))
-        reason = stored.get("reason")
-        reason = reason if isinstance(reason, str) else "deterministic policy rejected the decision"
-        return {
+        raw_reason = stored.get("reason")
+        reason = raw_reason if isinstance(raw_reason, str) else None
+        rejected_result: dict[str, Any] = {
             "result": "REJECTED",
-            "reason": _public_text(reason),
-            "reasonCode": _REASON_CODES.get(reason, "POLICY_REJECTED"),
+            "reason": _public_text(reason) if reason is not None else None,
+            "reasonCode": _REASON_CODES.get(reason, "POLICY_REJECTED")
+            if reason is not None
+            else "POLICY_REJECTED",
             "checks": {
                 key: value
                 for key, value in stored.items()
                 if key.endswith("_result") and isinstance(value, str)
             },
         }
+        if isinstance(stored.get("computed_notional"), str):
+            rejected_result["computedNotional"] = stored["computed_notional"]
+        return rejected_result
     if intent is not None:
         stored = _run_json(intent.policy_evidence)
         checks = {
@@ -245,6 +306,9 @@ def _policy(run: AgentRun, intent: TradeIntent | None, action: str | None) -> di
             "reason": _public_text(reason) if isinstance(reason, str) else None,
             "reasonCode": _REASON_CODES.get(reason) if isinstance(reason, str) else None,
             "checks": checks,
+            "computedNotional": stored.get("computed_notional")
+            if isinstance(stored.get("computed_notional"), str)
+            else None,
         }
     return {"result": "NOT_AVAILABLE", "reason": _public_text(run.rationale)}
 
@@ -304,7 +368,9 @@ def _system_result(
     return run.result_state, None
 
 
-def _decision(run: AgentRun) -> dict[str, Any]:
+def _decision(
+    run: AgentRun, private_account_values: tuple[tuple[str, str], ...]
+) -> dict[str, Any]:
     raw = _run_json(run.decision)
     result: dict[str, Any] = {}
     for field in (
@@ -319,14 +385,16 @@ def _decision(run: AgentRun) -> dict[str, Any]:
     ):
         value = raw.get(field)
         if field == "rationale" and isinstance(value, str):
-            result[field] = _public_text(value)
+            result[field] = _public_text(value, private_account_values=private_account_values)
         elif isinstance(value, (str, int, float)) or value is None:
             result[field] = value
     result["supporting_factors"] = [
-        _public_text(item) for item in _string_list(raw.get("supporting_factors"))
+        _public_text(item, private_account_values=private_account_values)
+        for item in _string_list(raw.get("supporting_factors"))
     ]
     result["risk_factors"] = [
-        _public_text(item) for item in _string_list(raw.get("risk_factors"))
+        _public_text(item, private_account_values=private_account_values)
+        for item in _string_list(raw.get("risk_factors"))
     ]
     return result
 
@@ -334,27 +402,39 @@ def _decision(run: AgentRun) -> dict[str, Any]:
 def _summary(
     run: AgentRun,
     intent: TradeIntent | None,
-    evidence: dict[str, Any],
+    evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    decision = _decision(run)
+    private_account_values = _private_account_values(_run_json(run.evidence_timestamps))
+    decision = _decision(run, private_account_values)
     action = decision.get("action") if isinstance(decision.get("action"), str) else None
     outcome, reason = _system_result(run, intent, action)
-    return {
+    result: dict[str, Any] = {
         "id": run.id,
         "trigger": run.trigger_type,
         "model": run.model,
         "state": run.result_state,
         "startedAt": run.started_at,
         "completedAt": run.completed_at,
-        "decision": decision,
-        "rationale": decision.get("rationale"),
-        "supportingFactors": decision["supporting_factors"],
-        "riskFactors": decision["risk_factors"],
-        "policy": _policy(run, intent, action),
+        "decision": {
+            "action": decision.get("action"),
+            "pair": decision.get("pair"),
+            "confidence": decision.get("confidence"),
+        },
         "systemOutcome": outcome,
         "reason": reason,
-        "evidence": evidence,
     }
+    if evidence is not None:
+        result.update(
+            {
+                "decision": decision,
+                "rationale": decision.get("rationale"),
+                "supportingFactors": decision["supporting_factors"],
+                "riskFactors": decision["risk_factors"],
+                "policy": _policy(run, intent, action),
+                "evidence": evidence,
+            }
+        )
+    return result
 
 
 def _freshness(
@@ -430,7 +510,7 @@ def showcase(db: Session = Depends(get_db)) -> dict[str, Any]:
         _summary(latest, latest_intent, latest_evidence) if latest is not None else None
     )
     recent = [
-        _summary(run, intents.get(run.id), _safe_evidence(_run_json(run.evidence_timestamps)))
+        _summary(run, intents.get(run.id))
         for run in runs
     ]
     state = "AVAILABLE" if latest is not None and not stale else "STALE"

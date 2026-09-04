@@ -6,8 +6,8 @@
 no owner dependency and reads persisted `AgentRun`/`TradeIntent` evidence only;
 it never calls the model, Binance, or a mutation seam. The serializer explicitly
 allowlists decision summaries, rationale, supporting factors, risk factors,
-configured/allowed/effective symbols, candidate history, selected-pair ticker,
-closed OHLCV history, mandate text, policy result, system outcome, timestamps,
+configured/allowed/effective symbols, candidate symbols/failures, selected-pair ticker,
+selected-pair closed OHLCV history, mandate text, policy result, system outcome, timestamps,
 and freshness state. It excludes credentials, sessions, cookies, CSRF material,
 OAuth data, Telegram identifiers, account references, private balances,
 provider headers, and hidden reasoning.

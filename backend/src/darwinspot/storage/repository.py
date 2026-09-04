@@ -625,6 +625,7 @@ class Repository:
                     "OPEN",
                     "PARTIALLY_FILLED",
                     "CANCEL_PENDING",
+                    "CANCEL_BLOCKED",
                 ]
             )
         )
@@ -652,6 +653,7 @@ class Repository:
                             "OPEN",
                             "PARTIALLY_FILLED",
                             "CANCEL_PENDING",
+                            "CANCEL_BLOCKED",
                         ]
                     ),
                 )

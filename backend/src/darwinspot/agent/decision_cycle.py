@@ -266,6 +266,7 @@ class DecisionCycle:
         decision = await runtime.decide(decision_evidence)
         pair_selection_evidence = {
             "selected_pair": pair,
+            "effective_symbols": sorted(eligible_symbols),
             "candidate_symbols": sorted(candidate_symbols),
             "candidate_history": candidate_history_evidence,
             "candidate_failures": candidate_failures,

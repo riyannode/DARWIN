@@ -78,13 +78,15 @@ FINANCIAL_WRITES_ENABLED=false
 PUBLIC_SHOWCASE_ENABLED=true
 ```
 
-This uses the real model, real Binance public market evidence, real scheduled
-worker decisions, persisted AgentRun evidence, and a public read-only
-`http://localhost:3000/showcase` page. Financial writes are disabled; a
-policy-passing BUY/SELL completes locally as `FINANCIAL_WRITES_DISABLED` before
-any intent or proposal is created. No Binance order is created. Judges do not
-need owner credentials to inspect the showcase; operator configuration and
-mutations remain private.
+This uses the real model, real Binance public market evidence, and the real
+scheduled worker path. A full `AUTO_BOUNDED` decision cycle also requires
+authenticated Binance account reads for balances, open orders, trade activity,
+and symbol filters. Persisted AgentRun evidence is projected through the public
+read-only `http://localhost:3000/showcase` page without exposing private balances.
+Financial writes are disabled; a policy-passing BUY/SELL completes locally as
+`FINANCIAL_WRITES_DISABLED` before any intent or proposal is created. No Binance
+order is created. Judges do not need owner credentials to inspect the showcase;
+operator configuration and mutations remain private.
 
 ### REAL LIVE TRADING
 
@@ -124,7 +126,8 @@ Current repository verification status:
   `http://localhost:3000/api/demo/scenarios` path:** VERIFIED on a clean host
   port-3000 re-test.
 - **Scenario count and SQLite zero-row write proof:** VERIFIED.
-- **Chromium/browser pixel verification:** DEFERRED / UNVERIFIED.
+- **Judge-facing `/demo` and public-enabled `/showcase` Chromium rendering:** VERIFIED.
+- **Full operator/control-room browser acceptance:** NOT CLAIMED / not exhaustively verified.
 - **AUTO_BOUNDED funded live execution:** NOT VERIFIED; no funded order was
   submitted.
 - **HUMAN_APPROVAL authenticated Codex/Binance live acceptance:** PENDING /
