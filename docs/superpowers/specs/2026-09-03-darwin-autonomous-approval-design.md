@@ -302,10 +302,12 @@ intent REVALIDATING -> WAITING_FOR_EXECUTION_CONFIRMATION
 approval remains EXECUTING
 ```
 
-Confirmation decline, expiry, or cancellation causes a terminal no-write state,
-consumes the approval, and emits a Telegram result. Confirmation acceptance
-continues to `SUBMITTING`. Only then may the final server-owned write request be
-invoked.
+Confirmation decline, expiry, or cancellation preserves the possible-write
+marker, consumes the approval, and transitions to `SUBMISSION_UNKNOWN` with a
+Telegram result. Confirmation acceptance also transitions to
+`SUBMISSION_UNKNOWN`; reconciliation must conclusively account for the original
+request before any possible retry. No fresh financial request is emitted merely
+because ACCEPT was recorded.
 
 Before invoking the external write, persist the final request hash and an
 `external_call_started_at` marker. The marker is deliberately conservative:

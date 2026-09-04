@@ -62,6 +62,10 @@ _TRANSITIONS: dict[tuple[IntentState, str], IntentState] = {
         IntentState.WAITING_FOR_EXECUTION_CONFIRMATION,
         "confirmation_accepted",
     ): IntentState.SUBMITTING,
+    (
+        IntentState.WAITING_FOR_EXECUTION_CONFIRMATION,
+        "confirmation_unresolved",
+    ): IntentState.SUBMISSION_UNKNOWN,
     (IntentState.APPROVED, "blocked"): IntentState.BLOCKED,
     (IntentState.REVALIDATING, "blocked"): IntentState.BLOCKED,
     (IntentState.PROPOSED, "budget_rejected"): IntentState.REJECTED_BUDGET,

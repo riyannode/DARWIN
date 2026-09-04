@@ -132,9 +132,13 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
                             db, default_ttl_seconds=settings.approval_ttl_seconds
                         ).consume(
                             approval.approval_id,
-                            intent_state="CONFIRMATION_EXPIRED",
+                            intent_state="SUBMISSION_UNKNOWN",
                             reason="transport confirmation expired",
                         )
+                    else:
+                        intent.local_state = "SUBMISSION_UNKNOWN"
+                        intent.updated_at = datetime.now(UTC)
+                        db.commit()
                     mark_sent(db, message_id=row.id, worker_id=worker_id)
                     return
             resolution = cast(ElicitationAction, str(action).lower())
@@ -148,33 +152,23 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
                     delay_seconds=30,
                 )
                 return
-            if action == "ACCEPT":
-                intent.local_state = "REVALIDATING"
-                intent.confirmation_request_id = None
-                intent.confirmation_expires_at = None
-                intent.updated_at = datetime.now(UTC)
-                db.commit()
-            else:
-                approval = db.scalar(
-                    select(TradeIntentApproval).where(
-                        TradeIntentApproval.intent_id == intent.id
-                    ).limit(1)
-                )
-                if approval is None:
-                    mark_skipped(
-                        db,
-                        message_id=row.id,
-                        worker_id=worker_id,
-                        reason="approval is missing",
-                    )
-                    return
+            approval = db.scalar(
+                select(TradeIntentApproval)
+                .where(TradeIntentApproval.intent_id == intent.id)
+                .limit(1)
+            )
+            if approval is not None:
                 TradeIntentApprovalService(
                     db, default_ttl_seconds=settings.approval_ttl_seconds
                 ).consume(
                     approval.approval_id,
-                    intent_state="CONFIRMATION_DECLINED",
-                    reason="operator declined transport confirmation",
+                    intent_state="SUBMISSION_UNKNOWN",
+                    reason="transport confirmation resolved; reconciliation required",
                 )
+            else:
+                intent.local_state = "SUBMISSION_UNKNOWN"
+                intent.updated_at = datetime.now(UTC)
+                db.commit()
             mark_sent(db, message_id=row.id, worker_id=worker_id)
             return
         if row.kind == PROPOSAL_KIND:

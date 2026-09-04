@@ -184,7 +184,6 @@ class ApprovedExecution:
 
                 await submit_intent(self.repo, self.client, catalog, intent)
             except CodexConfirmationRequired as exc:
-                intent.external_call_started_at = None
                 intent.local_state = "WAITING_FOR_EXECUTION_CONFIRMATION"
                 intent.confirmation_request_id = str(exc.request_id)
                 if exc.expires_at is not None:

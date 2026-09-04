@@ -23,7 +23,7 @@
 - One PostgreSQL database is authoritative; do not add Redis, Kafka, workflow frameworks, or event sourcing.
 - Ordinary financial writes are serialized per Binance account with PostgreSQL-only coordination.
 - Revalidation uses fresh exchange/account state and the newest structured policy; stale approvals never submit stale payloads.
-- Failed, rejected, expired, or revalidation-failed intents cannot reach a Binance write seam.
+- Failed, rejected, expired, or revalidation-failed intents cannot reach a Binance write seam; a pending Codex confirmation resolves conservatively to `SUBMISSION_UNKNOWN` before any retry.
 - `SUBMISSION_UNKNOWN` always reconciles before retry; the external-call marker is conservative.
 - Telegram and web approval use one durable approval state machine.
 - Emergency-stop cancellation is the only special operator-command write path; model cancellation and direct web cancellation are disabled.
@@ -299,7 +299,7 @@ Acquire a PostgreSQL advisory lock using a stable account key on a dedicated DB 
 
 - [ ] **Step 4: Implement durable execution phases**
 
-Claim approval `APPROVED -> EXECUTING` and intent `APPROVED -> REVALIDATING` atomically. On revalidation failure, write `REVALIDATION_FAILED` + approval `CONSUMED` atomically. If confirmation is required, persist `WAITING_FOR_EXECUTION_CONFIRMATION` while approval remains `EXECUTING`; only an explicit confirmation response proceeds.
+Claim approval `APPROVED -> EXECUTING` and intent `APPROVED -> REVALIDATING` atomically. On revalidation failure, write `REVALIDATION_FAILED` + approval `CONSUMED` atomically. If confirmation is required, persist `WAITING_FOR_EXECUTION_CONFIRMATION` while approval remains `EXECUTING`; every explicit confirmation response preserves the write marker and resolves to `SUBMISSION_UNKNOWN`, requiring reconciliation before any retry.
 
 - [ ] **Step 5: Implement conservative external-call marker**
 

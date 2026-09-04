@@ -122,9 +122,9 @@ the newest policy and budget, and reruns deterministic checks. A failure pairs
 
 If the exact Codex/Binance transport requests additional confirmation, the
 intent becomes `WAITING_FOR_EXECUTION_CONFIRMATION` while approval remains
-`EXECUTING`. Decline/expiry/cancel is terminal no-write and consumes the
-approval. Acceptance proceeds to the write seam. No confirmation is auto-
-answered.
+`EXECUTING`. Decline/expiry/cancel and acceptance all preserve the possible-write marker and
+transition to `SUBMISSION_UNKNOWN`; the approval is consumed and reconciliation
+must run before any possible retry. No confirmation is auto-answered.
 
 AUTO_BOUNDED claims `AUTO_AUTHORIZED -> REVALIDATING` without creating a
 `TradeIntentApproval` row. It uses the same account lock, fresh evidence,
@@ -174,6 +174,7 @@ WAITING_FOR_APPROVAL -> REJECTED
 WAITING_FOR_APPROVAL -> APPROVAL_EXPIRED
 REVALIDATING -> REVALIDATION_FAILED
 REVALIDATING -> WAITING_FOR_EXECUTION_CONFIRMATION
+WAITING_FOR_EXECUTION_CONFIRMATION -> SUBMISSION_UNKNOWN
 REVALIDATING -> SUBMITTING
 SUBMITTING -> OPEN / PARTIALLY_FILLED / FILLED / SUBMISSION_UNKNOWN
 SUBMISSION_UNKNOWN -> existing reconciliation states
