@@ -15,7 +15,6 @@ class ModelResponseError(ValueError):
     """Raised when the model response cannot be parsed or validated."""
 
 
-
 def _response_content(response: Any, operation: str) -> str:
     choices: list[object] | None = getattr(response, "choices", None)
     if not isinstance(choices, list) or not choices:

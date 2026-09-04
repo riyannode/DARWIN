@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { apiRequest, csrfHeaders } from "../../lib/api";
-import { connectionSchema, type ConnectionData } from "../../lib/schemas";
+import { agentSchema, connectionSchema, type AgentData, type ConnectionData } from "../../lib/schemas";
 
 type ConnectResponse = {
   state: string;
+  transport?: string;
   mcpEndpoint: string;
   message: string;
   capabilities?: string[];
@@ -16,6 +17,10 @@ export default function SettingsPage() {
   const [connection, setConnection] = useState<ConnectionData | null>(null);
   const [status, setStatus] = useState("");
   const [authorizationUrl, setAuthorizationUrl] = useState("");
+  const [codexStatus, setCodexStatus] = useState<{ state: string; verification: string; tools: string[] } | null>(null);
+  const [binanceApiStatus, setBinanceApiStatus] = useState<{ state: string; liveVerification: string } | null>(null);
+  const [agent, setAgent] = useState<AgentData | null>(null);
+  const [universeInput, setUniverseInput] = useState("");
 
   useEffect(() => {
     apiRequest<unknown>("/api/integrations/binance/status")
@@ -23,7 +28,38 @@ export default function SettingsPage() {
       .catch((error: unknown) =>
         setStatus(error instanceof Error ? error.message : "Connection state unavailable"),
       );
+    apiRequest<{ state: string; verification: string; tools: string[] }>("/api/integrations/codex/status")
+      .then(setCodexStatus)
+      .catch(() => setCodexStatus(null));
+    apiRequest<{ state: string; liveVerification: string }>("/api/integrations/binance-api/status")
+      .then(setBinanceApiStatus)
+      .catch(() => setBinanceApiStatus(null));
+    apiRequest<unknown>("/api/agent")
+      .then((value) => {
+        const data = agentSchema.parse(value);
+        setAgent(data);
+        setUniverseInput(data.supportedSymbols.join(", "));
+      })
+      .catch(() => setAgent(null));
   }, []);
+
+  async function saveUniverse(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const supportedSymbols = universeInput.split(",").map((value) => value.trim()).filter(Boolean);
+    setStatus("Validating Spot symbols against Binance metadata…");
+    try {
+      const result = await apiRequest<{ supportedSymbols: string[] }>("/api/agent/universe", {
+        method: "PUT",
+        headers: csrfHeaders(),
+        body: JSON.stringify({ supported_symbols: supportedSymbols }),
+      });
+      setUniverseInput(result.supportedSymbols.join(", "));
+      setAgent((current) => current ? { ...current, supportedSymbols: result.supportedSymbols } : current);
+      setStatus("Configured Spot universe saved.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Universe update failed");
+    }
+  }
 
   async function connect() {
     setStatus("Starting official Agent OS authorization…");
@@ -89,6 +125,30 @@ export default function SettingsPage() {
           </p>
         )}
         {status && <p className="form-status" role="status">{status}</p>}
+      </section>
+      <section className="panel">
+        <p className="eyebrow">SPOT TRADING UNIVERSE</p>
+        <h2>Configured capability, not authorization.</h2>
+        <p className="muted">Only an authenticated owner can change this persisted Spot/USDT list. Each symbol is checked against current Binance Spot metadata and required filters before saving.</p>
+        <form className="inline-form" onSubmit={saveUniverse}>
+          <label>Configured symbols<input value={universeInput} onChange={(event) => setUniverseInput(event.target.value)} placeholder="BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT" required /></label>
+          <button className="button primary" type="submit">Save configured universe</button>
+        </form>
+        <p className="panel-note">Configured Universe: {agent?.supportedSymbols.join(" · ") || "Loading…"}</p>
+        <p className="panel-note">Current Mandate Allowed Symbols: {agent?.mandate?.allowedSymbols.join(" · ") || "No mandate configured"}</p>
+        <p className="muted">A configured symbol is not tradable until it is also present in a new/current mandate and passes fresh deterministic policy checks.</p>
+      </section>
+      <section className="panel">
+        <p className="eyebrow">CODEX TRANSPORT</p>
+        <h2>{codexStatus?.state ?? "UNAVAILABLE"}</h2>
+        <p className="muted">Implementation: active · Authenticated live bridge: {codexStatus?.verification ?? "UNVERIFIED"}</p>
+        {codexStatus?.tools.length ? <p className="panel-note">Discovered tools: {codexStatus.tools.join(", ")}</p> : <p className="empty-line">No authenticated Binance tools are shown. DARWIN remains safe to start, but writes stay blocked.</p>}
+      </section>
+      <section className="panel">
+        <p className="eyebrow">BINANCE SPOT API TRANSPORT</p>
+        <h2>{binanceApiStatus?.state ?? "NOT_CONFIGURED"}</h2>
+        <p className="muted">Backend-only API credentials: {binanceApiStatus?.state === "READY" ? "configured" : "not configured"} · Live verification: {binanceApiStatus?.liveVerification ?? "UNVERIFIED"}</p>
+        <p className="panel-note">AUTO_BOUNDED uses this narrow Spot transport for fresh reads, bounded submission, and reconciliation. Withdrawals, transfers, futures, margin, and options are not supported.</p>
       </section>
       <section className="panel">
         <p className="eyebrow">CAPABILITIES</p>

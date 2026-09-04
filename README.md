@@ -1,91 +1,192 @@
-# DarwinSpot
+# DARWIN
 
-DarwinSpot is an owner-operated autonomous **Binance Spot trading agent** built on Binance Agent OS. It turns live market, symbol, account, and order evidence into typed decisions while keeping the final execution controls in the backend: durable intent, idempotency, reconciliation, a rolling budget, and an emergency stop.
+DARWIN is an autonomous Binance Spot market-monitoring and decision runtime with
+two explicit execution modes. It continuously collects live evidence, asks the
+DARWIN `AgentRuntime` for a typed BUY/SELL/HOLD decision, applies deterministic
+policy and budget checks, creates durable `TradeIntent` records, and signals the
+operator through Telegram.
 
-## Why it fits Track A — Trading Workflows
+DARWIN remains the only decision-making agent. HUMAN_APPROVAL requires operator
+approval; AUTO_BOUNDED can execute through the narrow Binance Spot API only
+after the same policy, lock, and fresh revalidation checks.
 
-DarwinSpot is built for the **Binance Agent OS Mini Hackathon, Track A — Build an AI agent with Agent OS**, with the theme **Trading Workflows**. The agent uses the official Binance Agent OS MCP endpoint for live exchange capabilities and demonstrates a bounded workflow from evidence collection to a typed Spot action:
+The direct Spot API base URL is restricted to approved Binance HTTPS hosts, and
+its credentials are never exposed to the frontend, DARWIN AgentRuntime, or
+Telegram.
+
+## Runtime flow
 
 ```text
-live Agent OS evidence
-        ↓
-LLM pair selection and decision
-        ↓
-backend validation + mandate + budget guard
-        ↓
-READ_ONLY / approval / bounded execution
-        ↓
-durable intent + Binance reconciliation + activity evidence
+24/7 scheduler
+  -> market/account evidence
+  -> DARWIN decision: BUY / SELL / HOLD
+  -> mandate + risk + budget + execution-policy gate
+  -> durable TradeIntent
+  -> HUMAN_APPROVAL: Telegram proposal -> APPROVE / REJECT / timeout
+     AUTO_BOUNDED: AUTO_POLICY authorization -> informational Telegram signal
+  -> fresh revalidation
+  -> HUMAN_APPROVAL: Codex Agent OS MCP
+     AUTO_BOUNDED: Binance Spot API
+  -> confirmation, if required
+  -> order submission + reconciliation
+  -> Telegram receipt
 ```
 
-## Architecture
+`APPROVE` authorizes fresh revalidation. It never authorizes submission of a
+stale payload. `REJECT`, `APPROVAL_EXPIRED`, and failed revalidation are terminal
+no-write paths.
 
-- **Frontend** — Next.js production UI for owner login, connection state, mandate, budget, agent mode, portfolio, emergency stop, and activity/evidence views.
-- **Backend API** — FastAPI application that owns authentication, authorization, validation, budget enforcement, durable state, idempotency, reconciliation, and emergency-stop behavior.
-- **Worker** — separate bounded Python process that claims scheduled runs, calls the agent cycle, retries only transient failures with backoff, and persists run state.
-- **PostgreSQL** — durable database for owner sessions, Agent OS OAuth material, mandates, budgets, runs, trade intents, and order events.
-- **Binance Agent OS** — official MCP integration for authorized market/account/trading capabilities. DarwinSpot does not ask for a Binance API key in the browser and does not handle withdrawals or transfers.
-- **LLM** — existing OpenAI SDK with either direct OpenAI or an optional OpenAI-compatible gateway such as 9Router. The backend sends the API key; it is never a frontend setting.
+## Ownership model
 
-## Guardrails and core features
+DARWIN owns:
 
-- `READ_ONLY`, `APPROVAL_REQUIRED`, and `AUTO_BOUNDED` operating modes.
-- A simple rolling 24-hour budget represented by **Available Budget** and **Spent Amount**.
-- Backend-owned mandate and budget validation; client controls are not authorization.
-- Durable submission intent, idempotency, exchange reconciliation, and explicit handling of uncertain submissions.
-- Global emergency stop and a chronological activity/evidence trail.
-- Explicit LLM configuration and response validation. Invalid configuration or malformed/schema-invalid model responses fail; DarwinSpot does not silently switch provider or model.
-- Direct OpenAI by default, or 9Router through `OPENAI_BASE_URL` without adding a provider dependency.
+- scheduling and worker leases;
+- market/account evidence acquisition;
+- LLM/model invocation and strategy context;
+- BUY/SELL/HOLD decisions;
+- structured execution policy, budget, risk, and sizing checks;
+- durable TradeIntent and approval state;
+- idempotency, write gating, and reconciliation;
+- emergency stop and audit trail;
+- Telegram proposal/receipt delivery state.
 
-## Quick Start
+Codex owns only the supported Binance OAuth identity and authenticated MCP
+transport. DARWIN never sends Codex natural-language trading prompts and Codex
+never chooses trades or evaluates DARWIN policy.
 
-The full fork, configuration, migration, Agent OS, operating-mode, health-check, troubleshooting, and shutdown procedure is in the [Judge Replication Runbook](docs/RUNBOOK.md).
+## Safety properties
 
-```bash
-git clone https://github.com/YOUR_GITHUB_USERNAME/DARWIN.git
-cd DARWIN
+- `HUMAN_APPROVAL` ordinary BUY/SELL writes require one durable operator approval.
+- `AUTO_BOUNDED` ordinary BUY/SELL writes require AUTO_POLICY authorization and
+  never bypass deterministic policy, account locking, or fresh revalidation.
+- Telegram callbacks contain only `approve:<approval_id>` or
+  `reject:<approval_id>`; all intent data is resolved server-side.
+- Telegram user ID, chat ID, webhook secret, and bot token are backend-only.
+- Approval TTL defaults to 90 seconds and is bounded to 30..180 seconds.
+- The persisted configured Spot universe defaults to exactly `BTCUSDT`,
+  `ETHUSDT`, `BNBUSDT`, and `SOLUSDT`; an owner can add/remove valid Spot/USDT
+  symbols without source changes. The current structured policy contains exact
+  `allowed_symbols`,
+  `max_order_notional`, and `max_open_actionable_intents`.
+- Proposal admission is atomic under PostgreSQL coordination.
+- One Binance account cannot execute concurrent ordinary financial writes.
+- Fresh market/account/filter/policy checks run immediately before submission.
+- The external-call marker is conservative; `SUBMISSION_UNKNOWN` reconciles
+  before retry.
+- The explicit authenticated emergency-stop command is the only special
+  cancellation path. Model CANCEL/CANCEL_REPLACE and direct web cancellation are
+  disabled.
+- Transfers and withdrawals are unsupported and fail closed.
 
-# The judge replication guide is on main after PR #2 is merged.
-git status --short --branch
+## Components
 
-cp backend/.env.example backend/.env
-chmod 600 backend/.env
-```
+- `frontend/` — existing Next.js operator UI and secondary approval surface.
+- `backend/` — FastAPI API, DARWIN worker, decision/runtime modules, approval,
+  execution, Codex transport, Telegram adapter, database, and migrations.
+- `docs/` — architecture, deployment, runbook, product, and submission notes.
+- PostgreSQL — source of truth for sessions, mandates, budgets, runs, intents,
+  approvals, order events, and durable work outbox rows.
 
-Then follow `docs/RUNBOOK.md` to install the locked dependencies, create PostgreSQL state, set the owner password and your own LLM/Agent OS credentials, run the migration, and start the three application processes.
+The purpose-specific PostgreSQL `outbox_messages` table carries Telegram
+proposal/receipt delivery and bounded approved-execution/emergency-cancel work.
+It is not a generic message bus.
 
-## LLM choices
+## Safe startup and configuration
 
-Direct OpenAI is the default when `OPENAI_BASE_URL` is unset. For 9Router, use the model shown by that gateway's `/v1/models` endpoint:
+Copy `backend/.env.example` to `backend/.env` and keep it backend-only. DARWIN
+starts safely while Codex/Binance authentication is pending. In that state it
+reports `AUTH_REQUIRED`/`NOT_AUTHENTICATED`, produces no fabricated Binance
+results, and performs no financial write.
+
+The default transport is:
 
 ```dotenv
-OPENAI_BASE_URL=http://localhost:20128/v1
-OPENAI_API_KEY=<your key from the 9Router dashboard>
-OPENAI_MODEL=<a model available in the 9Router dashboard>
+BINANCE_AGENT_OS_TRANSPORT=codex
+CODEX_APP_SERVER_COMMAND=codex app-server --stdio
+CODEX_APP_SERVER_VERSION=0.153.0
+CODEX_WRITE_CONFIRMATION_VERIFIED=false
+APPROVAL_TTL_SECONDS=90
+SIGNAL_COOLDOWN_SECONDS=300
 ```
 
-When DarwinSpot runs in a container, `localhost` points to that container. Use a 9Router hostname reachable from the backend container instead.
+Telegram requires all four backend-only values together:
+
+```dotenv
+TELEGRAM_BOT_TOKEN=<bot token>
+TELEGRAM_OPERATOR_CHAT_ID=<chat id>
+TELEGRAM_OPERATOR_USER_ID=<user id>
+TELEGRAM_WEBHOOK_SECRET=<secret token>
+```
+
+Do not commit `backend/.env`, Telegram credentials, OAuth codes, cookies,
+bearer tokens, or Codex credential material.
 
 ## Verification status
 
-Verified in this workspace: locked backend/frontend dependency installation, production frontend build, PostgreSQL migration, backend `/health/live` and `/health/ready`, frontend route responses, owner login/session, and the local 9Router `/v1/models` catalog. A clean-fork replication, full public HTTPS Binance Agent OS OAuth flow, live LLM completion, and live order have not been verified here.
+Verified in this implementation without operator Binance login:
 
-## Project sources
+- reversible Alembic migration;
+- deterministic policy and lifecycle behavior;
+- durable approval/outbox logic;
+- unauthenticated Codex App Server initialization/status handling;
+- Codex write blocking while confirmation verification is false;
+- strict backend lint/type checks;
+- frontend lint/typecheck/production build;
+- local API and Chromium checks where configured.
 
-- [Binance Agent OS Mini Hackathon announcement](https://x.com/binance/status/2094810011557838988)
-- [Binance submission survey](https://app.binance.com/uni-qr/user-survey/2913aa200aac462c89a737779393f3d4)
-- [9Router source](https://github.com/decolua/9router)
+Current status:
 
-## Demo
+```text
+Codex/Binance transport implementation: IMPLEMENTED
+Authenticated live bridge verification: PENDING
+Production readiness: PARTIALLY VERIFIED
+```
 
-Video demo: pending before submission.
+## Deferred manual verification
 
-No hosted application URL is required by the hackathon submission. The repository, replication guide, and demo video are the primary Track A deliverables.
+The operator must later perform these steps with a genuine Codex-managed Binance
+OAuth session:
 
-## Local demo and full Agent OS OAuth
+1. Authenticate Binance through Codex App Server.
+2. Confirm authenticated `mcpServerStatus/list`.
+3. Confirm a populated Binance tool inventory.
+4. Run an exact harmless read-only `mcpServer/tool/call` and inspect its
+   structured result.
+5. Observe the real write confirmation/elicitation contract.
+6. Decline the first write-path confirmation.
+7. Prove that zero Binance trade was created.
+8. Only after that, deliberately verify any approved write in a controlled
+   operator-owned account.
 
-The local replication path is a local build/health/UI demonstration. It binds the backend and frontend to loopback and does not claim that the official Binance Agent OS OAuth flow is complete.
+Telegram has no official sandbox. Use a dedicated test bot/private chat for real
+Bot API verification; do not replace it with a mocked acceptance claim.
 
-The full Agent OS OAuth path is separate: it requires a public **HTTPS** `FRONTEND_ORIGIN`, with both `/.well-known/darwinspot-oauth-client.json` and the OAuth callback publicly reachable on that same origin. A `127.0.0.1` or plain HTTP origin is suitable for the local demo only, not for full public OAuth.
+## Development
 
-Use credentials belonging to the operator running the fork. Keep `backend/.env` outside git and never put backend secrets in `frontend/.env` or a client bundle. Start in `READ_ONLY`, inspect the real Agent OS capabilities and timestamps, and enable execution only after deliberately configuring the mandate, budget, permissions, and operating mode.
+Backend:
+
+```bash
+cd backend
+uv sync --frozen
+PYTHONPATH=src uv run alembic upgrade head
+PYTHONPATH=src uv run uvicorn darwinspot.main:app --host 127.0.0.1 --port 8000
+```
+
+Worker:
+
+```bash
+cd backend
+PYTHONPATH=src uv run python -m darwinspot.worker
+```
+
+Frontend:
+
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+BACKEND_URL=http://127.0.0.1:8000 pnpm build
+HOSTNAME=127.0.0.1 PORT=3000 pnpm start
+```
+
+The local verification harness is ignored under `.local-tests/` and is never
+part of the production source or pull request.

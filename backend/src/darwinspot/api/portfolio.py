@@ -11,9 +11,9 @@ from darwinspot.api.auth import current_owner, mutation_owner, require_recent_re
 from darwinspot.binance.client import (
     AgentOSAuthInvalid,
     AgentOSUnavailable,
-    BinanceAgentOSClient,
     ToolCatalog,
 )
+from darwinspot.binance.factory import build_binance_client
 from darwinspot.binance.mapper import (
     BinanceMappingError,
     map_balances,
@@ -21,6 +21,7 @@ from darwinspot.binance.mapper import (
     map_open_orders,
 )
 from darwinspot.config import get_settings
+from darwinspot.execution.modes import ExecutionMode
 from darwinspot.storage.database import get_db
 from darwinspot.storage.models import OwnerSession
 from darwinspot.storage.repository import Repository
@@ -96,8 +97,13 @@ def put_budget(
 async def get_portfolio(
     _: object = Depends(current_owner), db: Session = Depends(get_db)
 ) -> dict[str, object]:
-    connection = Repository(db).current_connection()
-    if connection is None or connection.state != "CONNECTED":
+    repo = Repository(db)
+    config = repo.get_or_create_agent()
+    connection = repo.current_connection()
+    if (
+        config.mode == ExecutionMode.HUMAN_APPROVAL
+        and (connection is None or connection.state != "CONNECTED")
+    ):
         return {
             "connectionState": "DISCONNECTED",
             "balances": None,
@@ -110,15 +116,7 @@ async def get_portfolio(
         }
     try:
         settings = get_settings()
-        if not settings.token_encryption_key:
-            raise AgentOSUnavailable("TOKEN_ENCRYPTION_KEY is required for Agent OS auth")
-        client = BinanceAgentOSClient.with_oauth(
-            settings.binance_agent_os_mcp_url,
-            connection.id,
-            settings.token_encryption_key,
-            f"{settings.frontend_origin.rstrip('/')}/api/integrations/binance/callback",
-            f"{settings.frontend_origin.rstrip('/')}/.well-known/darwinspot-oauth-client.json",
-        )
+        client = build_binance_client(settings, connection, mode=config.mode)
         catalog = ToolCatalog(await client.discover_tools())
         snapshot = map_balances(await client.call_tool(catalog.arguments("balances", {})))
         open_orders = map_open_orders(await client.call_tool(catalog.arguments("open_orders", {})))
@@ -156,14 +154,22 @@ async def get_portfolio(
                 )
     except (AgentOSUnavailable, BinanceMappingError, ValueError) as exc:
         if isinstance(exc, AgentOSAuthInvalid):
-            repo = Repository(db)
-            repo.mark_connection_unavailable(connection.id)
+            if connection is not None:
+                repo = Repository(db)
+                repo.mark_connection_unavailable(connection.id)
             db.commit()
         raise HTTPException(
             status_code=503, detail=f"live Binance account unavailable: {exc}"
         ) from exc
+    connection_state = (
+        "CONNECTED"
+        if config.mode == ExecutionMode.AUTO_BOUNDED
+        else connection.state
+        if connection is not None
+        else "DISCONNECTED"
+    )
     return {
-        "connectionState": connection.state,
+        "connectionState": connection_state,
         "balances": [item.model_dump(mode="json") for item in snapshot.balances],
         "allocation": None
         if allocation_total is None

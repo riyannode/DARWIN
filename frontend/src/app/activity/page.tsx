@@ -13,6 +13,9 @@ type Activity = {
   trigger?: string;
   budgetResult?: string;
   binanceOrderId?: string | null;
+  approvalState?: string | null;
+  approvalExpiresAt?: string | null;
+  notificationState?: string;
 };
 
 const filters = ["all", "decisions", "orders", "fills", "budget", "errors"] as const;
@@ -24,7 +27,7 @@ function belongsToFilter(item: Activity, filter: Filter): boolean {
   if (filter === "orders") return item.type === "order";
   if (filter === "fills") return item.type === "order_event" && item.state.toUpperCase().includes("FILL");
   if (filter === "budget") return item.state === "BUDGET_EXCEEDED" || item.budgetResult === "BUDGET_EXCEEDED";
-  return item.state === "FAILED" || item.state.toUpperCase().includes("ERROR");
+  return item.state === "FAILED" || item.state.toUpperCase().includes("ERROR") || item.state === "REVALIDATION_FAILED";
 }
 
 export default function ActivityPage() {

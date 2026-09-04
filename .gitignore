@@ -1,5 +1,12 @@
 .env
 .venv/
+.local-tests/
+.tmp/
+playwright-report/
+test-results/
+*.har
+*.trace.zip
+*.tsbuildinfo
 __pycache__/
 *.py[cod]
 

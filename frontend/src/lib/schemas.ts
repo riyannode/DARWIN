@@ -1,7 +1,32 @@
 import { z } from "zod";
 
 export const agentSchema = z.object({
-  mode: z.string(), state: z.string(), emergencyStop: z.boolean(), nextRunAt: z.string().nullable().optional(), mandate: z.unknown().nullable(), latestDecision: z.object({ id: z.string(), state: z.string(), decision: z.record(z.string(), z.unknown()).nullable(), rationale: z.string().nullable(), startedAt: z.string(), completedAt: z.string().nullable(), mandateVersion: z.string().nullable(), budgetVersion: z.string().nullable() }).nullable(),
+  mode: z.enum(["HUMAN_APPROVAL", "AUTO_BOUNDED"]),
+  state: z.string(),
+  supportedSymbols: z.array(z.string()),
+  emergencyStop: z.boolean(),
+  nextRunAt: z.string().nullable().optional(),
+  mandate: z.object({
+    version: z.string(),
+    assets: z.string(),
+    entryRules: z.string(),
+    sizingRules: z.string(),
+    exitRules: z.string(),
+    allowedSymbols: z.array(z.string()),
+    maxOrderNotional: z.string(),
+    maxOpenActionableIntents: z.number(),
+    createdAt: z.string(),
+  }).nullable(),
+  latestDecision: z.object({
+    id: z.string(),
+    state: z.string(),
+    decision: z.record(z.string(), z.unknown()).nullable(),
+    rationale: z.string().nullable(),
+    startedAt: z.string(),
+    completedAt: z.string().nullable(),
+    mandateVersion: z.string().nullable(),
+    budgetVersion: z.string().nullable(),
+  }).nullable(),
 });
 export const budgetSchema = z.object({ dailyBudget: z.string().nullable(), availableBudget: z.string().nullable(), spentAmount: z.string().nullable() });
 export const connectionSchema = z.object({ state: z.string(), accountReference: z.string().nullable(), capabilities: z.array(z.string()) });
@@ -47,7 +72,22 @@ export const activityDetailSchema = z.object({
   price: z.string().nullable().optional(),
   state: z.string().optional(),
   budgetResult: z.string().optional(),
+  approvalState: z.string().nullable().optional(),
+  approvalExpiresAt: z.string().nullable().optional(),
+  notificationState: z.string().optional(),
   committedNotional: z.string().nullable().optional(),
+  supportingFactors: z.array(z.string()).optional(),
+  riskFactors: z.array(z.string()).optional(),
+  confidence: z.string().optional(),
+  revalidationEvidence: z.string().nullable().optional(),
+  revalidationFailedReason: z.string().nullable().optional(),
+  executionMode: z.enum(["HUMAN_APPROVAL", "AUTO_BOUNDED"]).optional(),
+  executionTransport: z.string().optional(),
+  authorizationSource: z.string().nullable().optional(),
+  authorizedAt: z.string().nullable().optional(),
+  confirmationRequestId: z.string().nullable().optional(),
+  confirmationExpiresAt: z.string().nullable().optional(),
+  approval: z.object({ id: z.string(), state: z.string(), expiresAt: z.string(), decidedAt: z.string().nullable(), decisionSource: z.string().nullable() }).nullable().optional(),
   events: z.array(z.object({
     id: z.string(),
     type: z.string(),

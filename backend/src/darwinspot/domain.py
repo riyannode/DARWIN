@@ -15,14 +15,6 @@ class AgentState(StrEnum):
     EMERGENCY_STOP = "EMERGENCY_STOP"
 
 
-class DecisionAction(StrEnum):
-    HOLD = "HOLD"
-    BUY = "BUY"
-    SELL = "SELL"
-    CANCEL = "CANCEL"
-    CANCEL_REPLACE = "CANCEL_REPLACE"
-
-
 def now_utc() -> datetime:
     return datetime.now(UTC)
 
