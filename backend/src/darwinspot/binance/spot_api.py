@@ -86,7 +86,7 @@ class BinanceSpotApiClient:
             ToolDescriptor(
                 "get_open_orders",
                 "open orders",
-                _schema({"symbol": symbol_property}, ["symbol"]),
+                _schema({"symbol": symbol_property}),
             ),
             ToolDescriptor(
                 "get_my_trades",
@@ -167,7 +167,7 @@ class BinanceSpotApiClient:
             return await self._request("GET", "/api/v3/account", {}, signed=True)
         if name == "get_open_orders":
             return await self._request(
-                "GET", "/api/v3/openOrders", {"symbol": call.arguments["symbol"]}, signed=True
+                "GET", "/api/v3/openOrders", call.arguments, signed=True
             )
         if name == "get_my_trades":
             return await self._request("GET", "/api/v3/myTrades", call.arguments, signed=True)

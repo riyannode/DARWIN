@@ -120,6 +120,8 @@ class TradeIntent(Base):
     execution_transport: Mapped[str] = mapped_column(String(32), default="CODEX_AGENT_OS_MCP")
     authorization_source: Mapped[str | None] = mapped_column(String(32))
     authorized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmation_request_id: Mapped[str | None] = mapped_column(String(128))
+    confirmation_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

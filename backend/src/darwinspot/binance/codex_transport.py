@@ -5,6 +5,7 @@ import json
 import shlex
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Literal, cast
 
 from darwinspot.binance.client import ToolCall, ToolDescriptor
@@ -20,7 +21,10 @@ class CodexAuthRequired(CodexTransportError):
 
 
 class CodexConfirmationRequired(CodexTransportError):
-    pass
+    def __init__(self, request_id: int | str, expires_at: str | None = None) -> None:
+        self.request_id = request_id
+        self.expires_at = expires_at
+        super().__init__(f"Codex elicitation {request_id} requires explicit operator resolution")
 
 
 class CodexAuthState(StrEnum):
@@ -52,12 +56,35 @@ class CodexElicitation:
     params: dict[str, Any]
 
     def require_explicit_resolution(self) -> None:
+        expires_at = self.params.get("expiresAt")
         raise CodexConfirmationRequired(
-            f"Codex elicitation {self.request_id} requires explicit operator resolution"
+            self.request_id, expires_at if isinstance(expires_at, str) else None
         )
 
 
 ElicitationAction = Literal["accept", "decline", "cancel"]
+_pending_confirmations: dict[str, tuple[CodexAppServerTransport, int | str]] = {}
+
+
+def remember_pending_confirmation(
+    intent_id: str, transport: CodexAppServerTransport, request_id: int | str
+) -> None:
+    _pending_confirmations[intent_id] = (transport, request_id)
+
+
+async def resolve_pending_confirmation(
+    intent_id: str, action: ElicitationAction
+) -> bool:
+    pending = _pending_confirmations.get(intent_id)
+    if pending is None:
+        return False
+    transport, request_id = pending
+    try:
+        await transport.resolve_elicitation(request_id, action)
+    except CodexTransportError:
+        return False
+    _pending_confirmations.pop(intent_id, None)
+    return True
 
 
 def _as_object(value: Any, message: str) -> dict[str, Any]:
@@ -93,6 +120,7 @@ class CodexAppServerTransport:
             command = shlex.split(self.settings.codex_app_server_command)
             if not command:
                 raise CodexTransportError("CODEX_APP_SERVER_COMMAND is empty")
+            await self._verify_version(command)
             if "app-server" in command:
                 command.extend(
                     [
@@ -115,6 +143,26 @@ class CodexAppServerTransport:
         except (TimeoutError, OSError) as exc:
             self.auth_state = CodexAuthState.UNAVAILABLE
             raise CodexTransportError("Codex App Server could not start") from exc
+
+    async def _verify_version(self, command: list[str]) -> None:
+        if Path(command[0]).name != "codex":
+            return
+        try:
+            version_process = await asyncio.create_subprocess_exec(
+                command[0],
+                "--version",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            output, _ = await asyncio.wait_for(version_process.communicate(), timeout=10)
+        except (OSError, TimeoutError) as exc:
+            raise CodexTransportError("Codex version could not be verified") from exc
+        output_text = output.decode("utf-8", errors="replace")
+        if (
+            version_process.returncode != 0
+            or self.settings.codex_app_server_version not in output_text
+        ):
+            raise CodexTransportError("Codex App Server version does not match configuration")
 
     async def close(self) -> None:
         process = self._process

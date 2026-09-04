@@ -21,7 +21,11 @@ from darwinspot.binance.client import (
     ToolCatalog,
     UnsupportedCapability,
 )
-from darwinspot.binance.codex_transport import CodexAuthRequired, CodexConfirmationRequired
+from darwinspot.binance.codex_transport import (
+    CodexAuthRequired,
+    CodexConfirmationRequired,
+    remember_pending_confirmation,
+)
 from darwinspot.binance.mapper import (
     BinanceMappingError,
     map_balances,
@@ -114,12 +118,16 @@ class ApprovedExecution:
         if connection is None and intent.execution_mode == "HUMAN_APPROVAL":
             return ExecutionResult("AUTH_REQUIRED", "Binance Agent OS connection is unavailable")
         with account_execution_lock(self.repo.db, self.settings.binance_account_lock_key):
+            self.repo.db.refresh(intent)
             if intent.external_call_started_at is not None or intent.local_state in {
                 "SUBMITTING",
                 "SUBMISSION_UNKNOWN",
+                "WAITING_FOR_EXECUTION_CONFIRMATION",
             }:
                 from darwinspot.agent.cycle import reconcile_open_intents
 
+                if intent.local_state == "WAITING_FOR_EXECUTION_CONFIRMATION":
+                    return ExecutionResult(intent.local_state)
                 await reconcile_open_intents(self.repo, self.client)
                 return ExecutionResult(intent.local_state)
             try:
@@ -168,6 +176,7 @@ class ApprovedExecution:
                 json.dumps(call.arguments, default=str, sort_keys=True).encode("utf-8")
             ).hexdigest()
             intent.local_state = "SUBMITTING"
+            intent.external_call_started_at = datetime.now(UTC)
             intent.updated_at = datetime.now(UTC)
             self.repo.db.commit()
             try:
@@ -177,6 +186,15 @@ class ApprovedExecution:
             except CodexConfirmationRequired as exc:
                 intent.external_call_started_at = None
                 intent.local_state = "WAITING_FOR_EXECUTION_CONFIRMATION"
+                intent.confirmation_request_id = str(exc.request_id)
+                if exc.expires_at is not None:
+                    try:
+                        intent.confirmation_expires_at = datetime.fromisoformat(exc.expires_at)
+                    except ValueError:
+                        intent.confirmation_expires_at = None
+                transport = getattr(self.client, "transport", None)
+                if transport is not None:
+                    remember_pending_confirmation(intent.id, transport, exc.request_id)
                 intent.updated_at = datetime.now(UTC)
                 self.repo.db.commit()
                 log_event("BINANCE_CONFIRMATION_REQUIRED", intent_id=intent.id)

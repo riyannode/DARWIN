@@ -4,14 +4,14 @@ import asyncio
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider
 from mcp.shared.auth import OAuthClientMetadata
-from pydantic import AnyUrl, TypeAdapter
+from pydantic import AnyUrl, BaseModel, TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -64,6 +64,10 @@ class PendingOAuth:
     authorization_url: str | None = None
     oauth_state: str | None = None
     error: str | None = None
+
+
+class ConfirmationInput(BaseModel):
+    action: Literal["ACCEPT", "DECLINE", "CANCEL"]
 
 
 _oauth_flows: dict[str, PendingOAuth] = {}
@@ -498,12 +502,16 @@ def activity_detail(
             "pair": intent.pair,
             "side": intent.side,
             "orderType": intent.order_type,
-            "quantity": intent.quantity,
-            "quoteNotional": intent.quote_notional,
-            "price": intent.price,
+            "quantity": str(intent.quantity),
+            "quoteNotional": (
+                str(intent.quote_notional) if intent.quote_notional is not None else None
+            ),
+            "price": str(intent.price) if intent.price is not None else None,
             "state": intent.local_state,
             "budgetResult": intent.budget_result,
-            "committedNotional": intent.committed_notional,
+            "committedNotional": (
+                str(intent.committed_notional) if intent.committed_notional is not None else None
+            ),
             "binanceOrderId": intent.binance_order_id,
             "clientOrderId": intent.idempotency_key,
             "intentId": intent.id,
@@ -525,18 +533,24 @@ def activity_detail(
             "executionTransport": intent.execution_transport,
             "authorizationSource": intent.authorization_source,
             "authorizedAt": intent.authorized_at,
+            "confirmationRequestId": intent.confirmation_request_id,
+            "confirmationExpiresAt": intent.confirmation_expires_at,
             "rationale": intent.rationale,
             "supportingFactors": json.loads(intent.supporting_factors),
             "riskFactors": json.loads(intent.risk_factors),
-            "confidence": intent.confidence,
+            "confidence": str(intent.confidence),
             "revalidationEvidence": intent.revalidation_evidence,
             "revalidationFailedReason": intent.revalidation_failed_reason,
             "events": [
                 {
                     "id": event.id,
                     "type": event.upstream_event_type,
-                    "filledQuantity": event.filled_quantity,
-                    "filledNotional": event.filled_notional,
+                    "filledQuantity": (
+                        str(event.filled_quantity) if event.filled_quantity is not None else None
+                    ),
+                    "filledNotional": (
+                        str(event.filled_notional) if event.filled_notional is not None else None
+                    ),
                     "observedAt": event.observed_at,
                     "exchangeTimestamp": event.exchange_timestamp,
                     "evidence": json.loads(event.sanitized_evidence),
@@ -611,6 +625,35 @@ async def approve_order(
         "approvalState": result.approval_status,
         "binanceOrderId": intent.binance_order_id,
     }
+
+
+@router.post("/api/orders/{order_id}/confirmation")
+async def resolve_confirmation(
+    order_id: str,
+    request: ConfirmationInput,
+    _: object = Depends(mutation_owner),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    intent = db.get(TradeIntent, order_id)
+    if intent is None:
+        raise HTTPException(status_code=404, detail="order not found")
+    if (
+        intent.execution_mode != "HUMAN_APPROVAL"
+        or intent.local_state != "WAITING_FOR_EXECUTION_CONFIRMATION"
+        or not intent.confirmation_request_id
+    ):
+        raise HTTPException(status_code=409, detail="order is not awaiting transport confirmation")
+    from darwinspot.notifications.outbox import CONFIRMATION_KIND, enqueue_unique
+
+    enqueue_unique(
+        db,
+        kind=CONFIRMATION_KIND,
+        aggregate_id=intent.id,
+        payload={"intent_id": intent.id, "action": request.action},
+        dedupe_key=f"resolve-confirmation:{intent.id}:{request.action}",
+    )
+    db.commit()
+    return {"state": "CONFIRMATION_RESOLUTION_QUEUED"}
 
 
 @router.post("/api/orders/{order_id}/reject")

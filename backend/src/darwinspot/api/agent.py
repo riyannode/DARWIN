@@ -231,14 +231,6 @@ async def run_once(
     settings = get_settings()
     config = repo.get_or_create_agent()
     connection = repo.current_connection()
-    if (
-        config.mode == ExecutionMode.HUMAN_APPROVAL
-        and settings.binance_agent_os_transport == "direct_oauth"
-        and (
-        connection is None or connection.state != "CONNECTED"
-        )
-    ):
-        raise HTTPException(status_code=409, detail="Binance Agent OS is not connected")
     if not settings.openai_api_key:
         raise HTTPException(status_code=503, detail="OPENAI_API_KEY is required for a real run")
     run = repo.start_run("RUN_ONCE", settings.openai_model)
@@ -281,31 +273,34 @@ async def emergency_stop(
 ) -> dict[str, object]:
     require_recent_reauthentication(owner)
     repo = Repository(db)
-    config = repo.get_or_create_agent()
-    config.emergency_stop = True
-    config.state = AgentState.EMERGENCY_STOP
-    config.next_run_at = None
-    targets: list[dict[str, str]] = []
+    settings = get_settings()
+    from darwinspot.execution.approved import account_execution_lock
     from darwinspot.notifications.outbox import EMERGENCY_CANCEL_KIND, enqueue_unique
 
-    for intent in repo.non_terminal_intents():
-        if intent.local_state not in {
-            "OPEN",
-            "PARTIALLY_FILLED",
-            "SUBMITTING",
-            "SUBMISSION_UNKNOWN",
-            "CANCEL_PENDING",
-        }:
-            continue
-        enqueue_unique(
-            db,
-            kind=EMERGENCY_CANCEL_KIND,
-            aggregate_id=intent.id,
-            payload={"intent_id": intent.id, "operator_action_id": owner.id},
-            dedupe_key=f"emergency-cancel:{config.id}:{intent.id}",
-        )
-        targets.append({"id": intent.id, "state": "CANCEL_QUEUED"})
-    db.commit()
+    with account_execution_lock(db, settings.binance_account_lock_key):
+        config = repo.get_or_create_agent()
+        config.emergency_stop = True
+        config.state = AgentState.EMERGENCY_STOP
+        config.next_run_at = None
+        targets: list[dict[str, str]] = []
+        for intent in repo.non_terminal_intents():
+            if intent.local_state not in {
+                "OPEN",
+                "PARTIALLY_FILLED",
+                "SUBMITTING",
+                "SUBMISSION_UNKNOWN",
+                "CANCEL_PENDING",
+            }:
+                continue
+            enqueue_unique(
+                db,
+                kind=EMERGENCY_CANCEL_KIND,
+                aggregate_id=intent.id,
+                payload={"intent_id": intent.id, "operator_action_id": owner.id},
+                dedupe_key=f"emergency-cancel:{config.id}:{intent.id}",
+            )
+            targets.append({"id": intent.id, "state": "CANCEL_QUEUED"})
+        db.commit()
     log_event(
         "EMERGENCY_STOP_ENABLED",
         operator_action_id=owner.id,

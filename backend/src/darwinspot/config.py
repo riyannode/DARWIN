@@ -23,6 +23,37 @@ def validate_openai_base_url(value: str | None) -> str | None:
     return value
 
 
+def validate_binance_spot_base_url(value: str) -> str:
+    if value != value.strip() or not value.strip():
+        raise ValueError(
+            "BINANCE_SPOT_API_BASE_URL must not be empty or contain surrounding whitespace"
+        )
+    try:
+        parsed = urlsplit(value)
+        _ = parsed.port
+    except ValueError as exc:
+        raise ValueError("BINANCE_SPOT_API_BASE_URL must be an absolute HTTPS URL") from exc
+    allowed_hosts = {
+        "api.binance.com",
+        "api1.binance.com",
+        "api2.binance.com",
+        "api3.binance.com",
+        "api4.binance.com",
+    }
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname is None
+        or parsed.hostname.lower() not in allowed_hosts
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path.rstrip("/")
+    ):
+        raise ValueError("BINANCE_SPOT_API_BASE_URL must be an approved Binance HTTPS host")
+    return value
+
+
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./darwinspot.db"
     openai_api_key: str | None = None
@@ -44,7 +75,7 @@ class Settings(BaseSettings):
     telegram_operator_chat_id: int | None = None
     telegram_operator_user_id: int | None = None
     telegram_webhook_secret: str | None = None
-    binance_agent_os_transport: Literal["codex", "direct_oauth"] = "codex"
+    binance_agent_os_transport: Literal["codex"] = "codex"
     codex_app_server_command: str = "codex app-server --stdio"
     codex_app_server_version: str = "0.153.0"
     codex_write_confirmation_verified: bool = False
@@ -68,6 +99,11 @@ class Settings(BaseSettings):
     @classmethod
     def validate_base_url(cls, value: str | None) -> str | None:
         return validate_openai_base_url(value)
+
+    @field_validator("binance_spot_api_base_url")
+    @classmethod
+    def validate_binance_url(cls, value: str) -> str:
+        return validate_binance_spot_base_url(value)
 
     @model_validator(mode="after")
     def validate_telegram_configuration(self) -> Settings:

@@ -34,7 +34,8 @@ fabricated, and no write is attempted.
 The Spot REST adapter uses only exchange metadata, ticker, account, open orders,
 trade history, order status, order submission, and order cancellation. Its
 credentials are backend-only and must belong to a dedicated Spot-trading-only
-key with withdrawals disabled and IP restrictions where available.
+key with withdrawals disabled and IP restrictions where available. Its base URL
+is restricted to approved Binance HTTPS API hosts.
 
 ## Runtime
 
@@ -131,6 +132,12 @@ newest policy, write marker, submission, reconciliation, and result outbox.
 The only difference is `AUTO_POLICY` authorization and the Binance Spot API
 transport; it never bypasses deterministic policy.
 
+If Codex requests an additional transport confirmation, DARWIN stores the
+opaque request reference and expiry, keeps the execution work pending, and
+requires an explicit owner ACCEPT/DECLINE/CANCEL command through the durable
+confirmation outbox. Expired confirmation becomes terminal no-write work;
+transport loss never triggers a retrying financial submission.
+
 Immediately before calling the external write seam, DARWIN persists a final
 request hash and `external_call_started_at`. If the marker is absent, recovery
 is a known pre-call path. If present, the call may have crossed the external
@@ -149,6 +156,9 @@ boundary; reconciliation wins over retry. The marker never proves success.
 universe. Its bootstrap default is exactly `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, and
 `SOLUSDT`. Owner-only settings can add or remove valid Spot/USDT symbols; this
 does not mutate historical mandates.
+
+Migration `0005_confirmation_reference` adds the opaque confirmation reference
+and expiry fields to `trade_intents`.
 
 Every new `trade_intents` row stores `execution_mode`, `execution_transport`,
 `authorization_source`, and `authorized_at`. Human intents use

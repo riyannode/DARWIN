@@ -10,6 +10,10 @@ DARWIN remains the only decision-making agent. HUMAN_APPROVAL requires operator
 approval; AUTO_BOUNDED can execute through the narrow Binance Spot API only
 after the same policy, lock, and fresh revalidation checks.
 
+The direct Spot API base URL is restricted to approved Binance HTTPS hosts, and
+its credentials are never exposed to the frontend, DARWIN AgentRuntime, or
+Telegram.
+
 ## Runtime flow
 
 ```text

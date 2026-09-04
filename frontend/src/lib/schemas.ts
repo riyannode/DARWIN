@@ -85,6 +85,8 @@ export const activityDetailSchema = z.object({
   executionTransport: z.string().optional(),
   authorizationSource: z.string().nullable().optional(),
   authorizedAt: z.string().nullable().optional(),
+  confirmationRequestId: z.string().nullable().optional(),
+  confirmationExpiresAt: z.string().nullable().optional(),
   approval: z.object({ id: z.string(), state: z.string(), expiresAt: z.string(), decidedAt: z.string().nullable(), decisionSource: z.string().nullable() }).nullable().optional(),
   events: z.array(z.object({
     id: z.string(),

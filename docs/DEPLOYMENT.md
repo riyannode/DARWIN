@@ -80,6 +80,8 @@ must produce `AUTH_REQUIRED`/`NOT_AUTHENTICATED` and no write.
   cancellation work; reconciliation continues while stop is active.
 - Notification delivery state is distinct from approval existence.
 - Failed Telegram delivery never auto-executes.
+- Transport confirmation resolution is durable work owned by the worker holding
+  the Codex session; losing that session fails closed without a write.
 
 ## Deferred manual acceptance
 

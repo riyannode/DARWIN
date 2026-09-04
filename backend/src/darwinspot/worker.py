@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx2
 import openai
+from sqlalchemy import select
 
 from darwinspot.agent.cycle import (
     CycleConfigurationError,
@@ -18,11 +19,18 @@ from darwinspot.agent.cycle import (
 from darwinspot.agent.runtime import AgentRuntime, ModelResponseError
 from darwinspot.approval.service import TradeIntentApprovalService
 from darwinspot.binance.client import AgentOSAuthInvalid, AgentOSUnavailable, UnsupportedCapability
-from darwinspot.binance.codex_transport import CodexAuthRequired, CodexTransportError
+from darwinspot.binance.codex_transport import (
+    CodexAuthRequired,
+    CodexTransportError,
+    ElicitationAction,
+    resolve_pending_confirmation,
+)
 from darwinspot.binance.factory import build_binance_client
+from darwinspot.binance.mapper import BinanceMappingError
 from darwinspot.config import Settings, get_settings
 from darwinspot.execution.approved import ApprovedExecution
 from darwinspot.notifications.outbox import (
+    CONFIRMATION_KIND,
     EMERGENCY_CANCEL_KIND,
     EXECUTION_KIND,
     PROPOSAL_KIND,
@@ -94,6 +102,81 @@ def _backoff_seconds(failure_streak: int) -> int:
 async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_id: str) -> None:
     data = payload(row)
     try:
+        if row.kind == CONFIRMATION_KIND:
+            intent = db.get(TradeIntent, data.get("intent_id"))
+            action = data.get("action")
+            if (
+                intent is None
+                or intent.local_state != "WAITING_FOR_EXECUTION_CONFIRMATION"
+                or action not in {"ACCEPT", "DECLINE", "CANCEL"}
+            ):
+                mark_skipped(
+                    db,
+                    message_id=row.id,
+                    worker_id=worker_id,
+                    reason="confirmation work is invalid",
+                )
+                return
+            expires_at = intent.confirmation_expires_at
+            if expires_at is not None:
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=UTC)
+                if expires_at.astimezone(UTC) <= datetime.now(UTC):
+                    approval = db.scalar(
+                        select(TradeIntentApproval)
+                        .where(TradeIntentApproval.intent_id == intent.id)
+                        .limit(1)
+                    )
+                    if approval is not None:
+                        TradeIntentApprovalService(
+                            db, default_ttl_seconds=settings.approval_ttl_seconds
+                        ).consume(
+                            approval.approval_id,
+                            intent_state="CONFIRMATION_EXPIRED",
+                            reason="transport confirmation expired",
+                        )
+                    mark_sent(db, message_id=row.id, worker_id=worker_id)
+                    return
+            resolution = cast(ElicitationAction, str(action).lower())
+            resolved = await resolve_pending_confirmation(intent.id, resolution)
+            if not resolved:
+                mark_retry(
+                    db,
+                    message_id=row.id,
+                    worker_id=worker_id,
+                    error="transport confirmation session is unavailable",
+                    delay_seconds=30,
+                )
+                return
+            if action == "ACCEPT":
+                intent.local_state = "REVALIDATING"
+                intent.confirmation_request_id = None
+                intent.confirmation_expires_at = None
+                intent.updated_at = datetime.now(UTC)
+                db.commit()
+            else:
+                approval = db.scalar(
+                    select(TradeIntentApproval).where(
+                        TradeIntentApproval.intent_id == intent.id
+                    ).limit(1)
+                )
+                if approval is None:
+                    mark_skipped(
+                        db,
+                        message_id=row.id,
+                        worker_id=worker_id,
+                        reason="approval is missing",
+                    )
+                    return
+                TradeIntentApprovalService(
+                    db, default_ttl_seconds=settings.approval_ttl_seconds
+                ).consume(
+                    approval.approval_id,
+                    intent_state="CONFIRMATION_DECLINED",
+                    reason="operator declined transport confirmation",
+                )
+            mark_sent(db, message_id=row.id, worker_id=worker_id)
+            return
         if row.kind == PROPOSAL_KIND:
             intent = db.get(TradeIntent, data.get("intent_id"))
             approval = db.get(TradeIntentApproval, data.get("approval_id"))
@@ -146,6 +229,7 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
             intent = db.get(TradeIntent, intent_id)
             mode = intent.execution_mode if intent is not None else "HUMAN_APPROVAL"
             client = build_binance_client(settings, Repository(db).current_connection(), mode=mode)
+            result: Any = None
             try:
                 result = await ApprovedExecution(Repository(db), client).execute_claimed(
                     approval_id=approval_id if isinstance(approval_id, str) else None,
@@ -153,9 +237,17 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
                 )
             finally:
                 transport = getattr(client, "transport", None)
-                if transport is not None:
+                if transport is not None and (
+                    result is None or result.state != "WAITING_FOR_EXECUTION_CONFIRMATION"
+                ):
                     await transport.close()
-            if result.state in {"AUTH_REQUIRED", "REVALIDATION_PENDING"}:
+            if result is None:
+                raise RuntimeError("execution coordinator returned no result")
+            if result.state in {
+                "AUTH_REQUIRED",
+                "REVALIDATION_PENDING",
+                "WAITING_FOR_EXECUTION_CONFIRMATION",
+            }:
                 mark_retry(
                     db,
                     message_id=row.id,
@@ -202,6 +294,8 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
     except (TelegramDeliveryError, TelegramNotConfigured) as exc:
         mark_retry(db, message_id=row.id, worker_id=worker_id, error=str(exc), delay_seconds=30)
     except (AgentOSUnavailable, CodexAuthRequired, CodexTransportError) as exc:
+        mark_retry(db, message_id=row.id, worker_id=worker_id, error=str(exc), delay_seconds=30)
+    except (BinanceMappingError, TimeoutError, ValueError) as exc:
         mark_retry(db, message_id=row.id, worker_id=worker_id, error=str(exc), delay_seconds=30)
 
 
