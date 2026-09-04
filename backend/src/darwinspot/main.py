@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from darwinspot.api import activity, agent, auth, portfolio
+from darwinspot.api import activity, agent, auth, demo, portfolio
 from darwinspot.config import get_settings
 from darwinspot.storage.database import SessionLocal
 from darwinspot.storage.repository import Repository
@@ -27,6 +27,7 @@ app.include_router(auth.router)
 app.include_router(agent.router)
 app.include_router(portfolio.router)
 app.include_router(activity.router)
+app.include_router(demo.router)
 
 
 @app.get("/health/live")
@@ -40,7 +41,9 @@ def ready() -> dict[str, str]:
     with SessionLocal() as db:
         mode = Repository(db).get_or_create_agent().mode
         missing_human_auth = mode == "HUMAN_APPROVAL" and not settings.token_encryption_key
-        if not settings.owner_password_hash or not settings.openai_api_key or missing_human_auth:
+        if not settings.demo_mode and (
+            not settings.owner_password_hash or not settings.openai_api_key or missing_human_auth
+        ):
             from fastapi import HTTPException
 
             raise HTTPException(status_code=503, detail="required backend configuration is missing")
