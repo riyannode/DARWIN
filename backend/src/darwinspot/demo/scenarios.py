@@ -130,7 +130,7 @@ def _definition(scenario_id: str) -> DemoScenarioDefinition:
 
 
 def _raw_klines(
-    symbol: str, interval: str, count: int, base: Decimal, drift: Decimal
+    interval: str, count: int, base: Decimal, drift: Decimal
 ) -> list[list[object]]:
     seconds = {"15m": 15 * 60, "1h": 60 * 60, "4h": 4 * 60 * 60}[interval]
     start = DEMO_NOW - timedelta(seconds=seconds * count + seconds // 2)
@@ -248,7 +248,7 @@ def _candidate_history() -> dict[str, dict[str, object]]:
         drift = max(_price(symbol) * Decimal("0.001"), Decimal("0.0001"))
         histories[symbol] = {
             interval: map_candidate_market_history(
-                _raw_klines(symbol, interval, 10, base, drift),
+                _raw_klines(interval, 10, base, drift),
                 symbol=symbol,
                 interval=interval,
                 now=DEMO_NOW,
@@ -264,7 +264,7 @@ def _selected_history(pair: str) -> dict[str, MarketHistorySnapshot]:
     drift = max(_price(pair) * Decimal("0.001"), Decimal("0.0001"))
     return {
         interval: map_market_history(
-            _raw_klines(pair, interval, 48, base, drift),
+            _raw_klines(interval, 48, base, drift),
             symbol=pair,
             interval=interval,
             now=DEMO_NOW,
@@ -306,27 +306,7 @@ def _guardrails(
     budget: BudgetSnapshot,
     effective: frozenset[str],
 ) -> list[dict[str, str]]:
-    if evaluation is None:
-        result = "NOT_EVALUATED"
-        reason = "HOLD does not create an executable policy evaluation"
-        return [
-            {"name": "Allowed Symbols", "result": "PASS", "detail": "ETHUSDT is allowed"},
-            {
-                "name": "Effective Universe",
-                "result": "PASS",
-                "detail": ", ".join(sorted(effective)),
-            },
-            {"name": "Max Per Trade", "result": result, "detail": reason},
-            {"name": "24h Budget", "result": result, "detail": reason},
-            {"name": "Max Concurrent Trades", "result": result, "detail": reason},
-            {"name": "Balance", "result": result, "detail": reason},
-            {"name": "Symbol Filters", "result": result, "detail": reason},
-            {"name": "Open-Order Conflict", "result": result, "detail": reason},
-            {"name": "Emergency Stop", "result": "PASS", "detail": "not active"},
-        ]
-    passed = "PASS" if evaluation.allowed else "FAIL"
-    reason = evaluation.reason or "all deterministic checks passed"
-    return [
+    base = [
         {
             "name": "Allowed Symbols",
             "result": "PASS" if decision.pair in DEMO_ALLOWED_SYMBOLS else "FAIL",
@@ -337,6 +317,22 @@ def _guardrails(
             "result": "PASS" if decision.pair in effective else "FAIL",
             "detail": ", ".join(sorted(effective)),
         },
+    ]
+    if evaluation is None:
+        result = "NOT_EVALUATED"
+        reason = "HOLD does not create an executable policy evaluation"
+        return base + [
+            {"name": "Max Per Trade", "result": result, "detail": reason},
+            {"name": "24h Budget", "result": result, "detail": reason},
+            {"name": "Max Concurrent Trades", "result": result, "detail": reason},
+            {"name": "Balance", "result": result, "detail": reason},
+            {"name": "Symbol Filters", "result": result, "detail": reason},
+            {"name": "Open-Order Conflict", "result": result, "detail": reason},
+            {"name": "Emergency Stop", "result": "PASS", "detail": "not active"},
+        ]
+    passed = "PASS" if evaluation.allowed else "FAIL"
+    reason = evaluation.reason or "all deterministic checks passed"
+    return base + [
         {
             "name": "Max Per Trade",
             "result": passed

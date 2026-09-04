@@ -67,8 +67,10 @@ def _run_decision(run: AgentRun) -> dict[str, Any]:
     return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
 
-def _run_system_result(run: AgentRun) -> tuple[str, str | None]:
-    decision = _run_decision(run)
+def _run_system_result(
+    run: AgentRun, decision: dict[str, Any] | None = None
+) -> tuple[str, str | None]:
+    decision = decision if decision is not None else _run_decision(run)
     if decision.get("action") == "HOLD":
         return "SKIPPED", "NO_TRADE"
     if run.result_state in {
@@ -83,6 +85,26 @@ def _run_system_result(run: AgentRun) -> tuple[str, str | None]:
     if run.result_state == "FAILED":
         return "FAILED", run.rationale
     return run.result_state, None
+
+
+def _run_activity_event(run: AgentRun) -> dict[str, object]:
+    decision = _run_decision(run)
+    system_outcome, reason = _run_system_result(run, decision)
+    return {
+        "id": run.id,
+        "type": "audit"
+        if run.trigger_type in {"BUDGET_INCREASED", "EMERGENCY_STOP_CLEARED"}
+        else "decision",
+        "state": run.result_state,
+        "timestamp": run.started_at,
+        "trigger": run.trigger_type,
+        "rationale": run.rationale,
+        "decision": decision.get("action"),
+        "pair": decision.get("pair"),
+        "confidence": decision.get("confidence"),
+        "systemOutcome": system_outcome,
+        "reason": reason,
+    }
 
 
 @dataclass
@@ -430,24 +452,7 @@ def activity(
             select(OutboxMessage).where(OutboxMessage.kind == "TELEGRAM_PROPOSAL")
         ).all()
     }
-    events: list[dict[str, object]] = [
-        {
-            "id": run.id,
-            "type": "audit"
-            if run.trigger_type in {"BUDGET_INCREASED", "EMERGENCY_STOP_CLEARED"}
-            else "decision",
-            "state": run.result_state,
-            "timestamp": run.started_at,
-            "trigger": run.trigger_type,
-            "rationale": run.rationale,
-            "decision": _run_decision(run).get("action"),
-            "pair": _run_decision(run).get("pair"),
-            "confidence": _run_decision(run).get("confidence"),
-            "systemOutcome": _run_system_result(run)[0],
-            "reason": _run_system_result(run)[1],
-        }
-        for run in runs
-    ]
+    events: list[dict[str, object]] = [_run_activity_event(run) for run in runs]
     events.extend(
         [
             {
