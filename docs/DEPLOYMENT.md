@@ -1,127 +1,104 @@
 # DARWIN Deployment
 
-## Production status
+## Current status
 
-The Codex App Server transport implementation is present and pinned to the
-inspected 0.153.0 protocol shapes. Authenticated Binance bridge verification is
-still `PENDING` until the operator completes genuine OAuth and live read-only /
-confirmation checks. Production readiness is therefore `PARTIALLY VERIFIED`.
+| Area | Status |
+| --- | --- |
+| Demo/Judge Docker runtime | VERIFIED |
+| Exact localhost:3000 judge path | VERIFIED on a clean port-3000 re-test |
+| AUTO_BOUNDED implementation | Present; funded live-order acceptance NOT VERIFIED |
+| HUMAN_APPROVAL implementation | Present; genuine authenticated Codex/Binance acceptance PENDING / NOT VERIFIED |
+| Chromium/browser pixel verification | DEFERRED / UNVERIFIED |
+| Fully production-verified live trading | Not claimed |
+
+No funded Binance order, withdrawal, transfer, or live Codex financial
+confirmation was performed for this verification.
 
 ## Judge runtime
 
-The repository includes a safe root `docker-compose.yml` for Demo Mode:
+The root `docker-compose.yml` is a safe Demo Mode runtime:
 
 ```bash
 docker compose up --build
 ```
 
-It starts only the existing backend/frontend pair with local SQLite, runs
-Alembic automatically, waits for the backend live healthcheck, and opens the
-frontend on `http://localhost:3000/demo`. The backend receives
-`DEMO_MODE=true`; no `.env`, LLM, Binance, Codex, Telegram, or funded-account
-configuration is read. The demo runner uses fixed evidence and exposes only
-read-only scenario routes. The Compose runtime must not be described as live
-trading.
-
-## Topology
-
-- Frontend and backend deploy as separate services behind HTTPS ingress.
-- PostgreSQL is the source of truth and the only coordination dependency.
-- API and worker may run as multiple replicas.
-- Worker scheduling uses the durable `AgentConfig.next_run_at` reservation.
-- Outbox claims use PostgreSQL row locks, `SKIP LOCKED`, and bounded leases.
-- Ordinary account financial writes use one PostgreSQL advisory lock per Binance
-  account.
-- No Redis, Kafka, or workflow framework is required.
-
-## Configuration
-
-Inject backend secrets through the host secret store only:
+It starts the backend/frontend pair with local SQLite, runs Alembic, waits for
+backend live health, and serves the judge page at:
 
 ```text
-DATABASE_URL
-OPENAI_API_KEY
-OPENAI_MODEL
-TOKEN_ENCRYPTION_KEY
-OWNER_PASSWORD_HASH
-FRONTEND_ORIGIN
-BINANCE_AGENT_OS_MCP_URL
-BINANCE_AGENT_OS_TRANSPORT=codex
-CODEX_APP_SERVER_COMMAND=codex app-server --stdio
-CODEX_APP_SERVER_VERSION=0.153.0
-CODEX_WRITE_CONFIRMATION_VERIFIED=false
-BINANCE_API_KEY
-BINANCE_API_SECRET
-BINANCE_SPOT_API_BASE_URL=https://api.binance.com
-BINANCE_ACCOUNT_LOCK_KEY=darwinspot-binance-account
-BINANCE_RECV_WINDOW_MS=5000
-APPROVAL_TTL_SECONDS=90
-TELEGRAM_BOT_TOKEN
-TELEGRAM_OPERATOR_CHAT_ID
-TELEGRAM_OPERATOR_USER_ID
-TELEGRAM_WEBHOOK_SECRET
+http://localhost:3000/demo
 ```
 
-Keep `CODEX_WRITE_CONFIRMATION_VERIFIED=false` until the operator has observed
-the exact live Binance/Codex confirmation behavior and intentionally enabled the
-verified path. Missing Binance OAuth must not prevent API/worker startup; it
-must produce `AUTH_REQUIRED`/`NOT_AUTHENTICATED` and no write.
+The backend receives `DEMO_MODE=true`. No `.env`, model-provider key, Binance
+credential, Codex auth, Telegram setting, or funded account is required. Fixed
+synthetic fixtures are used, and the backend financial-write guard blocks
+financial writes.
 
-## Release sequence
+Reset the runtime with:
 
-1. Build the locked backend image.
-2. Build the frontend with the exact backend origin.
-3. Provision PostgreSQL.
-4. Run `PYTHONPATH=src uv run alembic upgrade head` once as a release step.
-5. Start API replicas.
-6. Start worker replicas.
-7. Verify `/health/live` and `/health/ready`.
-8. Verify owner login, Codex status, Telegram configuration state, and durable
-   activity state.
-9. Keep DARWIN in `HUMAN_APPROVAL` until mandate, structured policy, budget,
-   Telegram, and manual Codex transport verification are deliberately complete.
-   Enable `AUTO_BOUNDED` only with a dedicated Spot-trading-only Binance API key,
-   withdrawals disabled, and IP restrictions where available.
+```bash
+docker compose down -v --remove-orphans
+```
 
-## Runtime guarantees
+This Compose file is not the production live-trading deployment.
 
-- DARWIN performs autonomous monitoring, analysis, and BUY/SELL/HOLD decisions.
-- HUMAN_APPROVAL ordinary BUY/SELL writes require durable explicit operator approval.
-- AUTO_BOUNDED ordinary BUY/SELL writes require AUTO_POLICY authorization and
-  the same fresh deterministic revalidation, not stale submission.
-- Policy admission is atomic and respects max-open intent limits.
-- One Binance account cannot perform concurrent ordinary financial writes.
-- `SUBMISSION_UNKNOWN` reconciles before retry.
-- Emergency stop remains available and queues explicit operator-command
-  cancellation work; reconciliation continues while stop is active.
-- Notification delivery state is distinct from approval existence.
-- Failed Telegram delivery never auto-executes.
-- Transport confirmation resolution is durable work owned by the worker holding
-  the Codex session; losing that session fails closed without a write.
+## Live topology
 
-## Deferred manual acceptance
+- Frontend and backend run as separate processes behind HTTPS ingress or a
+  reverse proxy.
+- PostgreSQL is the durable source of truth and coordination dependency.
+- API and worker can run as multiple replicas.
+- The worker is required for scheduled autonomous cycles and durable outbox
+  work; FastAPI alone is not a complete live deployment.
+- Live installation and the mode-specific credential matrix are maintained in
+  [LIVE.md](LIVE.md).
 
-Use a dedicated test bot/private chat and a controlled operator-owned account:
+## Live configuration boundary
 
-1. Complete genuine Binance OAuth through Codex App Server.
-2. Verify authenticated `mcpServerStatus/list`.
-3. Verify populated Binance tools.
-4. Perform an exact harmless read-only MCP call and inspect its structured
-   result.
-5. Observe the real write confirmation/elicitation contract.
-6. Decline the first write confirmation.
-7. Verify zero trade creation.
-8. Keep the status `PENDING` if any step is unavailable.
+LIVE requires `DEMO_MODE=false` and the common settings in `LIVE.md`.
 
-Telegram has no official sandbox; do not substitute mocked acceptance.
+- `AUTO_BOUNDED` uses the backend Binance Spot API with a dedicated
+  `BINANCE_API_KEY` and `BINANCE_API_SECRET`. It does not require per-order
+  human approval, Codex OAuth, or `TOKEN_ENCRYPTION_KEY` for its readiness path.
+- `HUMAN_APPROVAL` uses Codex App Server and Binance Agent OS MCP. It requires
+  `TOKEN_ENCRYPTION_KEY` for persisted connection/OAuth material and genuine
+  Codex-managed Binance Agent OS OAuth. It does not use
+  `BINANCE_API_KEY`/`BINANCE_API_SECRET` as its primary write transport.
+- `CODEX_WRITE_CONFIRMATION_VERIFIED=false` remains required until a real
+  operator manually verifies the live write elicitation contract.
+- Telegram is optional and must be configured as one complete four-value
+  group. Notification delivery is not financial authorization.
+
+## Release checks
+
+Before a live deployment, provision PostgreSQL, run the migrations once, start
+both API and worker processes, and verify health, owner authentication, mode
+configuration, and durable activity state. Keep live acceptance status honest:
+implementation is not evidence of authenticated provider or funded execution.
+
+```bash
+cd backend
+uv sync --frozen
+cp .env.example .env
+PYTHONPATH=src uv run alembic upgrade head
+PYTHONPATH=src uv run uvicorn darwinspot.main:app --host 0.0.0.0 --port 8000
+```
+
+In a separate process:
+
+```bash
+cd backend
+PYTHONPATH=src uv run python -m darwinspot.worker
+```
+
+Frontend build/start is documented in [LIVE.md](LIVE.md).
 
 ## Failure and rollback
 
-If Codex exits or authentication expires, keep the worker alive, mark transport
-unavailable, retry bounded work, and block writes. Do not fabricate exchange
-state. If a request may have crossed the external write marker, reconcile before
-retry. Roll back application images only after checking migration compatibility;
-never roll back durable financial state by deleting intents or order events.
+If Codex exits or authentication expires, keep the worker alive, mark the
+transport unavailable, retry bounded work, and block writes. If a request may
+have crossed an external write marker, reconcile before retry. Never roll back
+durable financial state by deleting intents or order events.
 
-Never log bot tokens, OAuth codes, bearer credentials, cookies, or Codex
-credential material.
+Never log bot tokens, OAuth codes, bearer credentials, cookies, owner passwords,
+or Codex credential material.
