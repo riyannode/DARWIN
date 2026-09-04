@@ -176,7 +176,8 @@ Candidate scanning is count-independent and uses the complete effective set,
 up to the existing configured-universe validation maximum of 100 symbols. Each
 candidate receives 10 closed candles for `15m` and `1h`; no `4h` candidate scan
 or 48-candle candidate fetch is performed. A failed candidate is excluded and
-recorded in sanitized audit evidence. If all candidates fail, no pair selection
+recorded as sanitized structured logs and original-cycle `pair_selection`
+evidence, not child runs. If all candidates fail, no pair selection
 or financial work occurs. Final detail remains 48 closed candles for each
 `15m`, `1h`, and `4h` interval for only the selected pair.
 

@@ -78,9 +78,10 @@ candles each for `15m`, `1h`, and `4h` only for the selected pair. Historical
 bars inform BUY/SELL/HOLD reasoning, do not authorize trades, exclude the
 currently forming candle, and do not guarantee trend prediction.
 
-Candidate history failures exclude only the affected symbol and are recorded
-as sanitized audit evidence. If every candidate fails validation, pair selection
-is skipped and the cycle returns a fail-closed no-candidate result.
+Candidate history failures exclude only the affected symbol and are retained as
+sanitized structured logs plus original-cycle `pair_selection` evidence; they do
+not create child `AgentRun` rows. If every candidate fails validation, pair
+selection is skipped and the cycle returns a fail-closed no-candidate result.
 
 ## State and safety
 

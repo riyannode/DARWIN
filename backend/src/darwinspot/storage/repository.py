@@ -878,6 +878,14 @@ class Repository:
         run.completed_at = now_utc()
         self.db.commit()
 
+    def record_run_evidence(self, run_id: str, evidence: dict[str, Any]) -> None:
+        run = self.db.get(AgentRun, run_id)
+        if run is None:
+            raise ValueError("agent run not found")
+        run.evidence_timestamps = json.dumps(evidence, default=str, sort_keys=True)
+        run.evidence_hash = self.content_hash({"evidence": run.evidence_timestamps})
+        self.db.commit()
+
     def record_decision(
         self, run_id: str, decision: dict[str, Any], evidence: dict[str, Any]
     ) -> None:

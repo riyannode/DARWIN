@@ -69,22 +69,25 @@ scheduler
 ### DecisionCycle
 
 `DecisionCycle` acquires current Binance Spot metadata and computes the
-intersection of persisted `AgentConfig.supported_symbols`, current mandate
-`allowed_symbols`, and currently valid Spot/USDT symbols with required filters.
-It computes that effective set, validates required Spot filters, and scans
-all remaining symbols with typed candidate history: 10 closed candles for each
-of `15m` and `1h`, using public `/api/v3/klines` requests with `limit=11` and
-bounded concurrency. A candidate failure is audited and excludes only that
-symbol. If no candidate history validates, the cycle returns
-`NO_EFFECTIVE_SYMBOLS` without pair selection. Pair selection receives only the
-remaining validated candidate set and candidate history. After exactly one
-candidate is selected, the existing selected-pair path fetches exactly 48
-closed candles for each of `15m`, `1h`, and `4h` with `limit=49`, plus current
-account evidence. The public history adapter is mode-independent; AUTO_BOUNDED
-and HUMAN_APPROVAL receive equivalent typed market evidence. The mapper filters
-the currently forming candle, rejects malformed/non-monotonic OHLCV, and rejects
-history whose newest closed candle is more than two interval periods old. It asks
-the same DARWIN runtime for a typed BUY/SELL/HOLD. HOLD records a run only.
+authoritative intersection of persisted `AgentConfig.supported_symbols`, current
+mandate `allowed_symbols`, and currently valid Spot/USDT symbols with required
+filters. It scans all remaining symbols with typed candidate history: 10 closed
+candles for each of `15m` and `1h`, using public `/api/v3/klines` requests with
+`limit=11` and bounded concurrency. A candidate failure is logged and excludes
+only that symbol; its sanitized symbol/error code remains in the original run's
+`pair_selection` evidence, not a child `AgentRun`. If no candidate history
+validates, the cycle returns
+`NO_EFFECTIVE_SYMBOLS` without pair selection.
+
+Pair selection receives the remaining validated candidate set and candidate
+history. After exactly one candidate is selected, the final decision model
+receives only selected-pair evidence: current ticker, detailed 15m/1h/4h
+history, balances, open orders, recent activity, filters, mandate, policy, and
+budget. Candidate history is retained only in the persisted `pair_selection`
+evidence envelope for auditability; it is not passed to the final decision
+model.
+The selected-pair detail fetch uses `limit=49` and retains 48 closed candles for
+`15m`, `1h`, and `4h` before the final decision call.
 BUY/SELL passes through backend checks before it can create an actionable intent:
 
 - exact symbol in the configured trading universe;

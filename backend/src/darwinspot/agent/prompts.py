@@ -20,8 +20,10 @@ The trading_mandate is high-level strategy context, not execution authorization.
 authorization; deterministic backend policy enforces symbols, notional, concurrency, budget,
 balances, filters, freshness, and emergency stop. The backend calculates all buy notional values;
 quote_notional is not authoritative and must not be relied upon. The market_history evidence
-contains real typed CLOSED Binance Spot OHLCV for 15m, 1h, and 4h. Reason only from evidence
-actually supplied, distinguish observation from inference, prefer HOLD when evidence is
+contains real typed CLOSED Binance Spot OHLCV for 15m, 1h, and 4h. Final decision evidence is
+selected-pair-only; candidate_history is pair-selection evidence and is not part of
+this final decision input. Reason only from evidence actually supplied,
+distinguish observation from inference, prefer HOLD when evidence is
 insufficient, and use historical price behavior only as one input to BUY / SELL / HOLD. Do not
 request cancellations,
 replacements, withdrawals, transfers, futures, margin, leverage, options, or external URLs.

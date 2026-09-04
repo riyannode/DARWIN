@@ -52,8 +52,10 @@ DARWIN reasons from current ticker, account, order, and filter snapshots plus
 real typed CLOSED Binance Spot OHLCV. Candidate scanning uses 10 closed candles
 for each of `15m` and `1h` across every effective symbol; detailed reasoning
 uses 48 closed candles for each of `15m`, `1h`, and `4h` only for the selected
-pair. Historical bars are bounded evidence, not authorization or guaranteed
-trend prediction.
+pair. The bounded candidate bars are supplied only to pair selection. The final
+BUY/SELL/HOLD model receives selected-pair-only evidence and candidate history
+remains in the persisted `pair_selection` evidence envelope for auditability.
+Historical bars are not authorization and do not guarantee trend prediction.
 
 ## Verification status
 
