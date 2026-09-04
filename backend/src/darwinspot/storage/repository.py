@@ -145,7 +145,10 @@ class Repository:
     def latest_decision_run(self) -> AgentRun | None:
         return self.db.scalar(
             select(AgentRun)
-            .where(AgentRun.trigger_type.in_(("SCHEDULED", "RUN_ONCE")))
+            .where(
+                AgentRun.trigger_type.in_(("SCHEDULED", "RUN_ONCE")),
+                AgentRun.completed_at.is_not(None),
+            )
             .order_by(AgentRun.started_at.desc())
             .limit(1)
         )
