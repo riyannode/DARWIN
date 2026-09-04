@@ -95,9 +95,107 @@ export const activityDetailSchema = z.object({
   })).optional(),
 });
 
+export const demoScenarioSummarySchema = z.object({
+  scenarioId: z.string(),
+  title: z.string(),
+  description: z.string(),
+  timestamp: z.string(),
+  selectedPair: z.string(),
+  decision: z.enum(["BUY", "SELL", "HOLD"]),
+  confidence: z.string(),
+  systemOutcome: z.enum(["EXECUTED", "PENDING", "SKIPPED", "FAILED"]),
+  reason: z.string(),
+  policy: z.string(),
+});
+
+const demoCandleSchema = z.object({
+  open_time: z.string(),
+  close_time: z.string(),
+  open: z.string(),
+  high: z.string(),
+  low: z.string(),
+  close: z.string(),
+  volume: z.string(),
+  quote_volume: z.string(),
+});
+
+const demoHistorySchema = z.object({
+  symbol: z.string(),
+  interval: z.enum(["15m", "1h", "4h"]),
+  candles: z.array(demoCandleSchema),
+});
+
+export const demoScenarioSchema = z.object({
+  mode: z.literal("DEMO_MODE"),
+  scenarioId: z.string(),
+  title: z.string(),
+  description: z.string(),
+  timestamp: z.string(),
+  disclosure: z.object({
+    deterministic: z.boolean(),
+    recordedEvidence: z.boolean(),
+    llmCall: z.boolean(),
+    liveBinance: z.boolean(),
+    financialWrites: z.boolean(),
+  }),
+  configuredUniverse: z.array(z.string()),
+  allowedSymbols: z.array(z.string()),
+  effectiveUniverse: z.array(z.string()),
+  candidateScan: z.object({
+    intervals: z.array(z.string()),
+    closedCandleCount: z.number(),
+    candidateSymbols: z.array(z.string()),
+    candidateHistory: z.record(z.string(), z.record(z.string(), z.unknown())),
+    selectedPair: z.string(),
+    excludedCandidates: z.array(z.string()),
+  }),
+  selectedPairEvidence: z.object({
+    selected_pair: z.string(),
+    market: z.record(z.string(), z.unknown()),
+    market_history: z.record(z.string(), demoHistorySchema),
+    balances: z.record(z.string(), z.unknown()),
+    open_orders: z.record(z.string(), z.unknown()),
+    recent_activity: z.record(z.string(), z.unknown()),
+    symbol_filters: z.record(z.string(), z.unknown()),
+  }),
+  mandate: z.string(),
+  policy: z.object({
+    allowedSymbols: z.array(z.string()),
+    maxPerTrade: z.string(),
+    budgetTotal: z.string(),
+    budgetSpentOrReserved: z.string(),
+    budgetAvailable: z.string(),
+    maxConcurrentTrades: z.number(),
+    emergencyStop: z.boolean(),
+    result: z.string(),
+    reason: z.string().nullable(),
+    reasonCode: z.string().nullable(),
+    guardrails: z.array(z.object({ name: z.string(), result: z.string(), detail: z.string() })),
+  }),
+  decision: z.object({
+    action: z.enum(["BUY", "SELL", "HOLD"]),
+    pair: z.string().nullable(),
+    order_type: z.enum(["MARKET", "LIMIT"]).nullable(),
+    side: z.enum(["BUY", "SELL"]).nullable(),
+    quantity: z.string().nullable(),
+    price: z.string().nullable(),
+    rationale: z.string(),
+    evidence: z.array(z.string()),
+    confidence: z.string(),
+    supporting_factors: z.array(z.string()),
+    risk_factors: z.array(z.string()),
+  }),
+  systemOutcome: z.enum(["EXECUTED", "PENDING", "SKIPPED", "FAILED"]),
+  systemReason: z.string(),
+  intentCreated: z.boolean(),
+  lifecycle: z.array(z.string()),
+});
+
 export type AgentData = z.infer<typeof agentSchema>;
 export type BudgetData = z.infer<typeof budgetSchema>;
 export type ConnectionData = z.infer<typeof connectionSchema>;
 export type PortfolioData = z.infer<typeof portfolioSchema>;
 export type OpenOrder = z.infer<typeof openOrderSchema>;
 export type ActivityDetail = z.infer<typeof activityDetailSchema>;
+export type DemoScenarioSummary = z.infer<typeof demoScenarioSummarySchema>;
+export type DemoScenario = z.infer<typeof demoScenarioSchema>;
