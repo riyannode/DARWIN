@@ -200,3 +200,103 @@ export type OpenOrder = z.infer<typeof openOrderSchema>;
 export type ActivityDetail = z.infer<typeof activityDetailSchema>;
 export type DemoScenarioSummary = z.infer<typeof demoScenarioSummarySchema>;
 export type DemoScenario = z.infer<typeof demoScenarioSchema>;
+
+const showcaseCandleSchema = z.object({
+  open_time: z.string(),
+  close_time: z.string(),
+  open: z.string(),
+  high: z.string(),
+  low: z.string(),
+  close: z.string(),
+  volume: z.string(),
+  quote_volume: z.string(),
+});
+const showcaseHistorySchema = z.object({
+  symbol: z.string(),
+  interval: z.enum(["15m", "1h", "4h"]),
+  candles: z.array(showcaseCandleSchema),
+  observed_at: z.string().optional(),
+});
+const showcaseDecisionSchema = z.object({
+  action: z.enum(["BUY", "SELL", "HOLD"]).nullable().optional(),
+  pair: z.string().nullable().optional(),
+  order_type: z.enum(["MARKET", "LIMIT"]).nullable().optional(),
+  side: z.enum(["BUY", "SELL"]).nullable().optional(),
+  quantity: z.string().nullable().optional(),
+  price: z.string().nullable().optional(),
+  rationale: z.string().nullable().optional(),
+  confidence: z.string().nullable().optional(),
+  supporting_factors: z.array(z.string()),
+  risk_factors: z.array(z.string()),
+});
+const showcaseEvidenceSchema = z.object({
+  pairSelection: z.object({
+    selectedPair: z.string().nullable(),
+    candidateSymbols: z.array(z.string()),
+    effectiveSymbols: z.array(z.string()),
+    candidateFailures: z.record(z.string(), z.string()),
+  }),
+  selectedPair: z.object({
+    selectedPair: z.string().nullable(),
+    market: z.record(z.string(), z.string()),
+    marketHistory: z.record(z.string(), showcaseHistorySchema),
+  }),
+});
+const showcaseRunSchema = z.object({
+  id: z.string(),
+  trigger: z.enum(["SCHEDULED", "RUN_ONCE"]),
+  model: z.string(),
+  state: z.string(),
+  startedAt: z.string(),
+  completedAt: z.string().nullable(),
+  decision: showcaseDecisionSchema,
+  rationale: z.string().nullable(),
+  supportingFactors: z.array(z.string()),
+  riskFactors: z.array(z.string()),
+  policy: z.object({
+    result: z.string(),
+    reason: z.string().nullable().optional(),
+    reasonCode: z.string().nullable().optional(),
+    checks: z.record(z.string(), z.string()).optional(),
+  }),
+  systemOutcome: z.string(),
+  reason: z.string().nullable(),
+  evidence: showcaseEvidenceSchema,
+});
+const showcaseRunSummarySchema = z.object({
+  id: z.string(),
+  trigger: z.enum(["SCHEDULED", "RUN_ONCE"]),
+  model: z.string(),
+  state: z.string(),
+  startedAt: z.string(),
+  completedAt: z.string().nullable(),
+  decision: z.object({
+    action: z.enum(["BUY", "SELL", "HOLD"]).nullable().optional(),
+    pair: z.string().nullable().optional(),
+    confidence: z.string().nullable().optional(),
+  }),
+  systemOutcome: z.string(),
+  reason: z.string().nullable(),
+});
+export const showcaseSchema = z.object({
+  showcaseState: z.enum(["AVAILABLE", "STALE"]),
+  demoMode: z.literal(false),
+  financialWritesEnabled: z.boolean(),
+  executionMode: z.enum(["HUMAN_APPROVAL", "AUTO_BOUNDED"]),
+  agentState: z.string(),
+  emergencyStop: z.boolean(),
+  configuredUniverse: z.array(z.string()),
+  allowedSymbols: z.array(z.string()),
+  effectiveUniverse: z.array(z.string()),
+  mandate: z.string().nullable(),
+  lastDecisionAt: z.string().nullable(),
+  lastEvidenceAt: z.string().nullable(),
+  freshness: z.enum(["FRESH", "STALE"]),
+  stale: z.boolean(),
+  staleReason: z.string().nullable(),
+  latestDecision: showcaseRunSchema.nullable(),
+  recentDecisions: showcaseRunSummarySchema.array(),
+});
+export type ShowcaseData = z.infer<typeof showcaseSchema>;
+export type ShowcaseRun = z.infer<typeof showcaseRunSchema>;
+export type ShowcaseRunSummary = z.infer<typeof showcaseRunSummarySchema>;

@@ -51,23 +51,61 @@ Stop and reset the judge runtime:
 docker compose down -v --remove-orphans
 ```
 
+## Three runtime profiles
+
+DARWIN supports two judge-facing proof paths and one operator-controlled trading
+profile. The flags are an explicit final authorization layer; they do not bypass
+policy, budget, emergency stop, HUMAN_APPROVAL, Codex confirmation, or transport
+checks.
+
+### JUDGE DEMO
+
+```dotenv
+DEMO_MODE=true
+FINANCIAL_WRITES_ENABLED=false
+PUBLIC_SHOWCASE_ENABLED=false
+```
+
+This is the root Docker Compose runtime: deterministic synthetic fixtures, zero
+credentials, no external LLM, no live Binance market reads, and financial writes
+blocked. Open `http://localhost:3000/demo`.
+
+### PUBLIC LIVE SHOWCASE
+
+```dotenv
+DEMO_MODE=false
+FINANCIAL_WRITES_ENABLED=false
+PUBLIC_SHOWCASE_ENABLED=true
+```
+
+This uses the real model, real Binance public market evidence, and the real
+scheduled worker path. A full `AUTO_BOUNDED` decision cycle also requires
+authenticated Binance account reads for balances, open orders, trade activity,
+and symbol filters. Persisted AgentRun evidence is projected through the public
+read-only `http://localhost:3000/showcase` page without exposing private balances.
+Financial writes are disabled; a policy-passing BUY/SELL completes locally as
+`FINANCIAL_WRITES_DISABLED` before any intent or proposal is created. No Binance
+order is created. Judges do not need owner credentials to inspect the showcase;
+operator configuration and mutations remain private.
+
+### REAL LIVE TRADING
+
+```dotenv
+DEMO_MODE=false
+FINANCIAL_WRITES_ENABLED=true
+PUBLIC_SHOWCASE_ENABLED=false
+```
+
+Recommended operator profile for real model/Binance operation. Financial
+execution may proceed only after the existing deterministic policy, budget,
+emergency-stop, HUMAN_APPROVAL/Codex confirmation, revalidation, and transport
+gates pass. Funded E2E execution is not claimed as verified here.
+
 ## Demo versus Live
 
-The root `docker-compose.yml` is the safe JUDGE/DEMO runtime. It is not the
-production live-trading deployment.
-
-- **DEMO MODE**: zero credentials, Docker Compose, deterministic synthetic
-  fixtures, no model-provider call, no live Binance, and backend financial
-  writes blocked.
-- **LIVE AUTO_BOUNDED**: real model provider and backend Binance Spot API
-  credentials; autonomous execution remains inside backend guardrails.
-- **LIVE HUMAN_APPROVAL**: real model provider and Codex App Server plus
-  Binance Agent OS MCP; execution is supervised through web or Telegram
-  approval.
-
-See [docs/DEMO.md](docs/DEMO.md) for the judge contract and
-[docs/LIVE.md](docs/LIVE.md) for installation and the complete credential
-matrix.
+The root `docker-compose.yml` remains the safe JUDGE DEMO runtime. It is not the
+production live deployment. See [docs/LIVE.md](docs/LIVE.md) for the complete
+credential matrix and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for topology.
 
 ## AUTO_BOUNDED vs HUMAN_APPROVAL
 
@@ -88,7 +126,8 @@ Current repository verification status:
   `http://localhost:3000/api/demo/scenarios` path:** VERIFIED on a clean host
   port-3000 re-test.
 - **Scenario count and SQLite zero-row write proof:** VERIFIED.
-- **Chromium/browser pixel verification:** DEFERRED / UNVERIFIED.
+- **Judge-facing `/demo` and public-enabled `/showcase` Chromium rendering:** VERIFIED.
+- **Full operator/control-room browser acceptance:** NOT CLAIMED / not exhaustively verified.
 - **AUTO_BOUNDED funded live execution:** NOT VERIFIED; no funded order was
   submitted.
 - **HUMAN_APPROVAL authenticated Codex/Binance live acceptance:** PENDING /

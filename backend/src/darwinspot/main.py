@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from darwinspot.api import activity, agent, auth, demo, portfolio
+from darwinspot.api import activity, agent, auth, demo, portfolio, showcase
 from darwinspot.config import get_settings
 from darwinspot.storage.database import SessionLocal
 from darwinspot.storage.repository import Repository
@@ -28,6 +28,7 @@ app.include_router(agent.router)
 app.include_router(portfolio.router)
 app.include_router(activity.router)
 app.include_router(demo.router)
+app.include_router(showcase.router)
 
 
 @app.get("/health/live")
@@ -41,8 +42,14 @@ def ready() -> dict[str, str]:
     with SessionLocal() as db:
         mode = Repository(db).get_or_create_agent().mode
         missing_human_auth = mode == "HUMAN_APPROVAL" and not settings.token_encryption_key
+        missing_auto_credentials = mode == "AUTO_BOUNDED" and (
+            not settings.binance_api_key or not settings.binance_api_secret
+        )
         if not settings.demo_mode and (
-            not settings.owner_password_hash or not settings.openai_api_key or missing_human_auth
+            not settings.owner_password_hash
+            or not settings.openai_api_key
+            or missing_human_auth
+            or missing_auto_credentials
         ):
             from fastapi import HTTPException
 

@@ -207,6 +207,7 @@ class Repository:
                             "CANCELED",
                             "EXPIRED",
                             "REJECTED_EXCHANGE",
+                            "FINANCIAL_WRITES_DISABLED",
                         ]
                     )
                 )
@@ -624,6 +625,7 @@ class Repository:
                     "OPEN",
                     "PARTIALLY_FILLED",
                     "CANCEL_PENDING",
+                    "CANCEL_BLOCKED",
                 ]
             )
         )
@@ -651,6 +653,7 @@ class Repository:
                             "OPEN",
                             "PARTIALLY_FILLED",
                             "CANCEL_PENDING",
+                            "CANCEL_BLOCKED",
                         ]
                     ),
                 )

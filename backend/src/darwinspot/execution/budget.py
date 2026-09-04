@@ -21,6 +21,7 @@ BUY_BUDGET_RESERVATION_STATES = frozenset(
         "OPEN",
         "PARTIALLY_FILLED",
         "CANCEL_PENDING",
+        "CANCEL_BLOCKED",
     }
 )
 

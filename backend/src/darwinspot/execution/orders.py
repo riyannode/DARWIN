@@ -17,6 +17,7 @@ class IntentState(StrEnum):
     CONFIRMATION_DECLINED = "CONFIRMATION_DECLINED"
     CONFIRMATION_EXPIRED = "CONFIRMATION_EXPIRED"
     BLOCKED = "BLOCKED"
+    FINANCIAL_WRITES_DISABLED = "FINANCIAL_WRITES_DISABLED"
     REJECTED_BUDGET = "REJECTED_BUDGET"
     READY = "READY"
     SUBMITTING = "SUBMITTING"
@@ -25,6 +26,7 @@ class IntentState(StrEnum):
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
     FILLED = "FILLED"
     CANCEL_PENDING = "CANCEL_PENDING"
+    CANCEL_BLOCKED = "CANCEL_BLOCKED"
     CANCELED = "CANCELED"
     REJECTED_EXCHANGE = "REJECTED_EXCHANGE"
     EXPIRED = "EXPIRED"
@@ -88,6 +90,8 @@ _TRANSITIONS: dict[tuple[IntentState, str], IntentState] = {
     (IntentState.OPEN, "partial_fill"): IntentState.PARTIALLY_FILLED,
     (IntentState.OPEN, "fill"): IntentState.FILLED,
     (IntentState.OPEN, "cancel_requested"): IntentState.CANCEL_PENDING,
+    (IntentState.OPEN, "cancel_blocked"): IntentState.CANCEL_BLOCKED,
+    (IntentState.CANCEL_BLOCKED, "cancel_requested"): IntentState.CANCEL_PENDING,
     (IntentState.OPEN, "expired"): IntentState.EXPIRED,
     (IntentState.PARTIALLY_FILLED, "fill"): IntentState.FILLED,
     (IntentState.PARTIALLY_FILLED, "cancel_requested"): IntentState.CANCEL_PENDING,

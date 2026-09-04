@@ -86,6 +86,7 @@ The API exposes the model decision and system outcome as separate fields.
 
 ## Verification status
 
-The Docker judge runtime and exact localhost port-3000 path are VERIFIED. The
-Chromium/browser pixel path remains DEFERRED / UNVERIFIED. No live funded order
+The Docker judge runtime and exact localhost port-3000 path are VERIFIED. Judge-facing
+Chromium rendering for `/demo` and public-enabled `/showcase` is VERIFIED. Full
+operator/control-room browser acceptance remains NOT CLAIMED. No live funded order
 or authenticated Codex/Binance write acceptance has been performed.

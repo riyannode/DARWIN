@@ -208,6 +208,8 @@ class ToolCatalog:
                 continue
             if operation == "market_universe" and "symbol" in self._required(tool):
                 continue
+            if operation == "symbol_filters" and "symbol" not in self._required(tool):
+                continue
             text = f"{tool.name} {tool.description}".lower()
             if operation == "submit_order" and "test" in text:
                 continue

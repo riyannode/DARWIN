@@ -92,6 +92,17 @@ def _upstream_timestamp(value: dict[str, Any]) -> datetime | None:
     )
 
 
+def _account_snapshot_timestamp(value: dict[str, Any]) -> datetime | None:
+    return next(
+        (
+            value[key]
+            for key in ("timestamp", "serverTime")
+            if isinstance(value.get(key), datetime)
+        ),
+        None,
+    )
+
+
 def _order_projection(payload: dict[str, Any], *, require_timestamp: bool) -> dict[str, Any]:
     value: dict[str, Any] = cast(dict[str, Any], _normalise_timestamps(payload))
     order_id = value.get("orderId", value.get("order_id"))
@@ -201,7 +212,7 @@ def map_balances(payload: Any, observed_at: datetime | None = None) -> BalanceSn
     if not isinstance(balances, list):
         raise BinanceMappingError("Agent OS account response omitted balances")
     projected: dict[str, Any] = {
-        "timestamp": _upstream_timestamp(value),
+        "timestamp": _account_snapshot_timestamp(value),
         "observed_at": observed_at or datetime.now(UTC),
         "balances": balances,
     }

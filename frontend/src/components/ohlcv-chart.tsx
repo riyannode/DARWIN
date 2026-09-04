@@ -10,9 +10,17 @@ const chartWidth = 760;
 const chartHeight = 280;
 const chartPadding = 24;
 
-type MarketHistory = DemoScenario["selectedPairEvidence"]["market_history"];
+type MarketHistory = Partial<Record<Timeframe, {
+  candles: Array<{
+    open_time: string;
+    open: string;
+    high: string;
+    low: string;
+    close: string;
+  }>;
+}>>;
 
-export function OhlcvChart({ history }: { history: MarketHistory }) {
+export function OhlcvChart({ history, live = false }: { history: MarketHistory; live?: boolean }) {
   const [timeframe, setTimeframe] = useState<Timeframe>("15m");
   const candles = useMemo(() => history[timeframe]?.candles ?? [], [history, timeframe]);
   const chart = useMemo(() => {
@@ -73,7 +81,7 @@ export function OhlcvChart({ history }: { history: MarketHistory }) {
         </svg>
         <div className="chart-scale"><span>{chart.highest.toLocaleString()}</span><span>{chart.lowest.toLocaleString()}</span></div>
       </div>
-      <p className="panel-note">Synthetic closed candles from the backend fixture. No indicators or live order signal are derived here.</p>
+      <p className="panel-note">{live ? "Real Binance closed candles persisted from the latest decision. No indicators or order signal are invented here." : "Synthetic closed candles from the backend fixture. No indicators or live order signal are derived here."}</p>
     </div>
   );
 }
