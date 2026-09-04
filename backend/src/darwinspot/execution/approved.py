@@ -39,6 +39,10 @@ from darwinspot.binance.mapper import (
     validate_order_submission_correlation,
 )
 from darwinspot.config import get_settings
+from darwinspot.execution.demo_guard import (
+    DemoFinancialWriteBlocked,
+    ensure_financial_write_allowed,
+)
 from darwinspot.execution.orders import SubmissionBlocked
 from darwinspot.execution.policy import PolicyEvaluation, evaluate_execution_policy
 from darwinspot.execution.universe import effective_symbols
@@ -192,6 +196,11 @@ class ApprovedExecution:
                 reason = evaluation.reason or "deterministic revalidation failed"
                 self._complete(service, approval, intent, "REVALIDATION_FAILED", reason)
                 return ExecutionResult("REVALIDATION_FAILED", reason)
+            try:
+                ensure_financial_write_allowed()
+            except DemoFinancialWriteBlocked as exc:
+                self._complete(service, approval, intent, "BLOCKED", str(exc))
+                return ExecutionResult("BLOCKED", str(exc))
             if (
                 intent.execution_mode == "HUMAN_APPROVAL"
                 and not self.settings.codex_write_confirmation_verified
@@ -323,6 +332,10 @@ class ApprovedExecution:
             return ExecutionResult(intent.local_state)
         if not intent.binance_order_id:
             return ExecutionResult("CANCEL_UNAVAILABLE", "Binance order identifier is unknown")
+        try:
+            ensure_financial_write_allowed()
+        except DemoFinancialWriteBlocked as exc:
+            return ExecutionResult("BLOCKED", str(exc))
         with account_execution_lock(self.repo.db, self.settings.binance_account_lock_key):
             intent.local_state = "CANCEL_PENDING"
             intent.updated_at = datetime.now(UTC)
@@ -381,9 +394,7 @@ class ApprovedExecution:
             self.repo.supported_symbols(), policy.allowed_symbols, market_universe
         )
         if intent.pair not in live_universe.eligible:
-            raise RevalidationRejected(
-                "intent symbol is disabled in the effective Spot universe"
-            )
+            raise RevalidationRejected("intent symbol is disabled in the effective Spot universe")
         observed_at = datetime.now(UTC)
         market = map_mcp_result(
             "get_ticker",
