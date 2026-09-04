@@ -12,6 +12,10 @@ type Activity = {
   pair?: string;
   trigger?: string;
   budgetResult?: string;
+  decision?: string | null;
+  confidence?: string | null;
+  systemOutcome?: string;
+  reason?: string | null;
   binanceOrderId?: string | null;
   approvalState?: string | null;
   approvalExpiresAt?: string | null;
