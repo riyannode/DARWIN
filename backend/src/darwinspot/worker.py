@@ -14,7 +14,6 @@ from darwinspot.agent.cycle import (
     CycleConfigurationError,
     CycleUnavailable,
     SubmissionUncertain,
-    reconcile_open_intents,
     run_cycle,
 )
 from darwinspot.agent.runtime import AgentRuntime, ModelResponseError
@@ -33,7 +32,6 @@ from darwinspot.config import Settings, get_settings
 from darwinspot.execution.approved import (
     ApprovedExecution,
     account_execution_lock,
-    requires_reconciliation,
 )
 from darwinspot.notifications.outbox import (
     CONFIRMATION_KIND,
@@ -123,11 +121,35 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
                     reason="confirmation work is invalid",
                 )
                 return
-            expires_at = intent.confirmation_expires_at
-            if expires_at is not None:
-                if expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=UTC)
-                if expires_at.astimezone(UTC) <= datetime.now(UTC):
+            with account_execution_lock(db, settings.binance_account_lock_key):
+                db.refresh(intent)
+                expires_at = intent.confirmation_expires_at
+                if expires_at is not None:
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=UTC)
+                    if expires_at.astimezone(UTC) <= datetime.now(UTC):
+                        await discard_pending_confirmation(intent.id)
+                        approval = db.scalar(
+                            select(TradeIntentApproval)
+                            .where(TradeIntentApproval.intent_id == intent.id)
+                            .limit(1)
+                        )
+                        if approval is not None:
+                            TradeIntentApprovalService(
+                                db, default_ttl_seconds=settings.approval_ttl_seconds
+                            ).resolve_execution_confirmation(
+                                approval.approval_id,
+                                reason="transport confirmation expired; reconciliation required",
+                            )
+                        else:
+                            intent.local_state = "SUBMISSION_UNKNOWN"
+                            intent.updated_at = datetime.now(UTC)
+                            db.commit()
+                        mark_sent(db, message_id=row.id, worker_id=worker_id)
+                        return
+                resolution = cast(ElicitationAction, str(action).lower())
+                resolved = await resolve_pending_confirmation(intent.id, resolution)
+                if not resolved:
                     await discard_pending_confirmation(intent.id)
                     approval = db.scalar(
                         select(TradeIntentApproval)
@@ -137,10 +159,12 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
                     if approval is not None:
                         TradeIntentApprovalService(
                             db, default_ttl_seconds=settings.approval_ttl_seconds
-                        ).consume(
+                        ).resolve_execution_confirmation(
                             approval.approval_id,
-                            intent_state="SUBMISSION_UNKNOWN",
-                            reason="transport confirmation expired",
+                            reason=(
+                                "transport confirmation could not be resolved; "
+                                "reconciliation required"
+                            ),
                         )
                     else:
                         intent.local_state = "SUBMISSION_UNKNOWN"
@@ -148,35 +172,33 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
                         db.commit()
                     mark_sent(db, message_id=row.id, worker_id=worker_id)
                     return
-            resolution = cast(ElicitationAction, str(action).lower())
-            resolved = await resolve_pending_confirmation(intent.id, resolution)
-            if not resolved:
-                mark_retry(
-                    db,
-                    message_id=row.id,
-                    worker_id=worker_id,
-                    error="transport confirmation session is unavailable",
-                    delay_seconds=30,
-                )
-                return
-            approval = db.scalar(
-                select(TradeIntentApproval)
-                .where(TradeIntentApproval.intent_id == intent.id)
-                .limit(1)
-            )
-            if approval is not None:
-                TradeIntentApprovalService(
-                    db, default_ttl_seconds=settings.approval_ttl_seconds
-                ).consume(
-                    approval.approval_id,
-                    intent_state="SUBMISSION_UNKNOWN",
-                    reason="transport confirmation resolved; reconciliation required",
-                )
-            else:
-                intent.local_state = "SUBMISSION_UNKNOWN"
-                intent.updated_at = datetime.now(UTC)
-                db.commit()
-            mark_sent(db, message_id=row.id, worker_id=worker_id)
+                db.refresh(intent)
+                if intent.local_state == "WAITING_FOR_EXECUTION_CONFIRMATION":
+                    approval = db.scalar(
+                        select(TradeIntentApproval)
+                        .where(TradeIntentApproval.intent_id == intent.id)
+                        .limit(1)
+                    )
+                    if approval is not None:
+                        TradeIntentApprovalService(
+                            db, default_ttl_seconds=settings.approval_ttl_seconds
+                        ).resolve_execution_confirmation(
+                            approval.approval_id,
+                            reason="transport confirmation resolved; reconciliation required",
+                        )
+                    else:
+                        intent.local_state = "SUBMISSION_UNKNOWN"
+                        intent.updated_at = datetime.now(UTC)
+                        db.commit()
+                elif intent.local_state != "SUBMISSION_UNKNOWN":
+                    mark_skipped(
+                        db,
+                        message_id=row.id,
+                        worker_id=worker_id,
+                        reason="confirmation was resolved after intent state changed",
+                    )
+                    return
+                mark_sent(db, message_id=row.id, worker_id=worker_id)
             return
         if row.kind == PROPOSAL_KIND:
             intent = db.get(TradeIntent, data.get("intent_id"))
@@ -229,31 +251,6 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
                 return
             intent = db.get(TradeIntent, intent_id)
             mode = intent.execution_mode if intent is not None else "HUMAN_APPROVAL"
-            if intent is not None and requires_reconciliation(intent):
-                client = build_binance_client(
-                    settings, Repository(db).current_connection(), mode=mode
-                )
-                try:
-                    with account_execution_lock(db, settings.binance_account_lock_key):
-                        db.refresh(intent)
-                        if requires_reconciliation(intent):
-                            await reconcile_open_intents(Repository(db), client)
-                finally:
-                    transport = getattr(client, "transport", None)
-                    if transport is not None:
-                        await transport.close()
-                db.refresh(intent)
-                if intent.local_state == "SUBMISSION_UNKNOWN":
-                    mark_retry(
-                        db,
-                        message_id=row.id,
-                        worker_id=worker_id,
-                        error="submission reconciliation remains unresolved",
-                        delay_seconds=30,
-                    )
-                else:
-                    mark_sent(db, message_id=row.id, worker_id=worker_id)
-                return
             client = build_binance_client(settings, Repository(db).current_connection(), mode=mode)
             result: Any = None
             try:
@@ -273,6 +270,7 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
                 "AUTH_REQUIRED",
                 "REVALIDATION_PENDING",
                 "WAITING_FOR_EXECUTION_CONFIRMATION",
+                "SUBMISSION_UNKNOWN",
             }:
                 mark_retry(
                     db,

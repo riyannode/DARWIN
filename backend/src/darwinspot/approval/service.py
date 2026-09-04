@@ -257,6 +257,54 @@ class TradeIntentApprovalService:
         )
         self.db.commit()
 
+    def resolve_execution_confirmation(self, approval_id: str, *, reason: str) -> ApprovalResult:
+        approval = self.db.scalar(
+            select(TradeIntentApproval)
+            .where(TradeIntentApproval.approval_id == approval_id)
+            .with_for_update()
+        )
+        if approval is None:
+            raise ApprovalError("approval not found")
+        intent = self.db.get(TradeIntent, approval.intent_id)
+        if intent is None:
+            raise ApprovalError("approval intent not found")
+        if approval.status == "CONSUMED" and intent.local_state == "SUBMISSION_UNKNOWN":
+            return ApprovalResult(
+                approval.approval_id,
+                intent.id,
+                approval.status,
+                intent.local_state,
+                False,
+            )
+        if approval.status not in {"EXECUTING", "APPROVED"}:
+            raise ApprovalError("execution confirmation cannot be resolved from its current state")
+        if intent.local_state != "WAITING_FOR_EXECUTION_CONFIRMATION":
+            raise ApprovalError("execution confirmation and intent state are inconsistent")
+        now = now_utc()
+        approval.status = "CONSUMED"
+        approval.updated_at = now
+        intent.local_state = "SUBMISSION_UNKNOWN"
+        intent.updated_at = now
+        enqueue_unique(
+            self.db,
+            kind=RESULT_KIND,
+            aggregate_id=intent.id,
+            payload={
+                "intent_id": intent.id,
+                "result": "SUBMISSION_UNKNOWN",
+                "reason": reason[:512],
+            },
+            dedupe_key=f"telegram-result:{intent.id}:SUBMISSION_UNKNOWN",
+        )
+        self.db.commit()
+        return ApprovalResult(
+            approval.approval_id,
+            intent.id,
+            approval.status,
+            intent.local_state,
+            True,
+        )
+
     def claim_auto_for_execution(self, intent_id: str) -> TradeIntent:
         intent = self.db.scalar(
             select(TradeIntent).where(TradeIntent.id == intent_id).with_for_update()

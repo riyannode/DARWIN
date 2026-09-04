@@ -178,6 +178,7 @@ class CodexAppServerTransport:
         process = self._process
         self._process = None
         self._thread_id = None
+        self._pending_elicitations.clear()
         if process is None:
             return
         if process.returncode is None:

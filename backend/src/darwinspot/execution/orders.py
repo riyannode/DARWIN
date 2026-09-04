@@ -53,15 +53,19 @@ _TRANSITIONS: dict[tuple[IntentState, str], IntentState] = {
     (
         IntentState.WAITING_FOR_EXECUTION_CONFIRMATION,
         "confirmation_declined",
-    ): IntentState.CONFIRMATION_DECLINED,
+    ): IntentState.SUBMISSION_UNKNOWN,
     (
         IntentState.WAITING_FOR_EXECUTION_CONFIRMATION,
         "confirmation_expired",
-    ): IntentState.CONFIRMATION_EXPIRED,
+    ): IntentState.SUBMISSION_UNKNOWN,
     (
         IntentState.WAITING_FOR_EXECUTION_CONFIRMATION,
         "confirmation_accepted",
-    ): IntentState.SUBMITTING,
+    ): IntentState.SUBMISSION_UNKNOWN,
+    (
+        IntentState.WAITING_FOR_EXECUTION_CONFIRMATION,
+        "confirmation_canceled",
+    ): IntentState.SUBMISSION_UNKNOWN,
     (
         IntentState.WAITING_FOR_EXECUTION_CONFIRMATION,
         "confirmation_unresolved",

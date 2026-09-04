@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from darwinspot.agent.schemas import AgentDecision
@@ -24,6 +24,7 @@ from darwinspot.binance.client import (
 from darwinspot.binance.codex_transport import (
     CodexAuthRequired,
     CodexConfirmationRequired,
+    discard_pending_confirmation,
     remember_pending_confirmation,
 )
 from darwinspot.binance.mapper import (
@@ -58,6 +59,16 @@ def requires_reconciliation(intent: TradeIntent) -> bool:
     return intent.local_state == "SUBMISSION_UNKNOWN" or (
         intent.local_state == "SUBMITTING" and intent.external_call_started_at is not None
     )
+
+
+def confirmation_is_expired(intent: TradeIntent, *, now: datetime | None = None) -> bool:
+    expires_at = intent.confirmation_expires_at
+    if expires_at is None:
+        return False
+    aware_expires_at = (
+        expires_at if expires_at.tzinfo is not None else expires_at.replace(tzinfo=UTC)
+    )
+    return aware_expires_at.astimezone(UTC) <= (now or datetime.now(UTC))
 
 
 @dataclass(frozen=True)
@@ -118,8 +129,16 @@ class ApprovedExecution:
                 candidate_intent = self.repo.db.get(TradeIntent, candidate_approval.intent_id)
         elif intent_id is not None:
             candidate_intent = self.repo.db.get(TradeIntent, intent_id)
-        if candidate_intent is not None and requires_reconciliation(candidate_intent):
-            return await self._reconcile_only(candidate_intent)
+        if candidate_intent is not None:
+            if (
+                candidate_intent.local_state == "WAITING_FOR_EXECUTION_CONFIRMATION"
+                and confirmation_is_expired(candidate_intent)
+            ):
+                return await self._expire_confirmation(
+                    service, candidate_intent, approval_id=approval_id
+                )
+            if requires_reconciliation(candidate_intent):
+                return await self._reconcile_only(candidate_intent)
         if approval_id is not None:
             approval, intent = service.claim_for_execution(approval_id)
         elif intent_id is not None:
@@ -245,6 +264,38 @@ class ApprovedExecution:
                 return ExecutionResult(intent.local_state)
             await reconcile_open_intents(self.repo, self.client)
             return ExecutionResult(intent.local_state)
+
+    async def _expire_confirmation(
+        self,
+        service: TradeIntentApprovalService,
+        intent: TradeIntent,
+        *,
+        approval_id: str | None,
+    ) -> ExecutionResult:
+        with account_execution_lock(self.repo.db, self.settings.binance_account_lock_key):
+            self.repo.db.refresh(intent)
+            if intent.local_state != "WAITING_FOR_EXECUTION_CONFIRMATION":
+                return ExecutionResult(intent.local_state)
+            if not confirmation_is_expired(intent):
+                return ExecutionResult(intent.local_state)
+            await discard_pending_confirmation(intent.id)
+            if approval_id is None:
+                approval = self.repo.db.scalar(
+                    select(TradeIntentApproval)
+                    .where(TradeIntentApproval.intent_id == intent.id)
+                    .limit(1)
+                )
+                approval_id = approval.approval_id if approval is not None else None
+            if approval_id is not None:
+                service.resolve_execution_confirmation(
+                    approval_id,
+                    reason="transport confirmation expired; reconciliation required",
+                )
+            else:
+                intent.local_state = "SUBMISSION_UNKNOWN"
+                intent.updated_at = datetime.now(UTC)
+                self.repo.db.commit()
+            return ExecutionResult("SUBMISSION_UNKNOWN")
 
     @staticmethod
     def _complete(
