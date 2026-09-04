@@ -5,6 +5,8 @@ services:
     environment:
       DATABASE_URL: sqlite:////data/darwinspot.db
       DEMO_MODE: "true"
+      FINANCIAL_WRITES_ENABLED: "false"
+      PUBLIC_SHOWCASE_ENABLED: "false"
       FRONTEND_ORIGIN: http://localhost:3000
       LOG_LEVEL: INFO
     command:

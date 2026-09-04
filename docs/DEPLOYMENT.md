@@ -1,5 +1,23 @@
 # DARWIN Deployment
 
+## Runtime profiles
+
+The deployment has three explicit profiles:
+
+| Profile | DEMO_MODE | FINANCIAL_WRITES_ENABLED | PUBLIC_SHOWCASE_ENABLED | Evidence |
+| --- | --- | --- | --- | --- |
+| JUDGE DEMO | `true` | `false` | `false` | Synthetic `/demo`, zero credentials |
+| PUBLIC LIVE SHOWCASE | `false` | `false` | `true` | Real model/market reads, persisted `/showcase`, no writes |
+| REAL LIVE TRADING | `false` | `true` | `false` recommended | Operator-authenticated live execution after normal gates |
+
+`FINANCIAL_WRITES_ENABLED` is only an additional final authorization boundary.
+It never bypasses deterministic policy, budget, emergency stop, approval,
+revalidation, idempotency, or transport checks. `DEMO_MODE=true` always wins.
+
+The public showcase is read-only and fail-closed: when
+`PUBLIC_SHOWCASE_ENABLED=false`, `GET /api/showcase` returns 404. Existing
+operator APIs and every mutation remain owner-authenticated.
+
 ## Current status
 
 | Area | Status |

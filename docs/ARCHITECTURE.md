@@ -1,6 +1,29 @@
 # DARWIN Architecture
 
-## Authority and transport
+## Public live showcase
+
+`PUBLIC_SHOWCASE_ENABLED=true` exposes only `GET /api/showcase`. The route has
+no owner dependency and reads persisted `AgentRun`/`TradeIntent` evidence only;
+it never calls the model, Binance, or a mutation seam. The serializer explicitly
+allowlists decision summaries, rationale, supporting factors, risk factors,
+configured/allowed/effective symbols, candidate history, selected-pair ticker,
+closed OHLCV history, mandate text, policy result, system outcome, timestamps,
+and freshness state. It excludes credentials, sessions, cookies, CSRF material,
+OAuth data, Telegram identifiers, account references, private balances,
+provider headers, and hidden reasoning.
+
+The frontend `/showcase` is a separate judge-facing read-only page. It discloses
+`DEMO_MODE=false`, real model/market evidence, and `Financial writes: DISABLED`.
+The existing `/demo` route remains the deterministic synthetic fixture path.
+When the public flag is false, the public route returns 404. Existing operator
+routes and all mutation controls retain owner authentication.
+
+`FINANCIAL_WRITES_ENABLED=false` is the final write authorization seam after
+policy, budget, emergency stop, approval, revalidation, and transport checks.
+In safe-live mode a policy-passing BUY/SELL completes locally as
+`FINANCIAL_WRITES_DISABLED`, with public system outcome `SKIPPED` and reason
+`FINANCIAL_WRITES_DISABLED`; it is not an exchange failure and has no Binance
+order ID.
 
 DARWIN is the decision authority. The model receives typed internal evidence,
 mandate context, and structured policy and returns a typed BUY/SELL/HOLD

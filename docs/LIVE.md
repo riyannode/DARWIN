@@ -1,7 +1,48 @@
-# DARWIN LIVE Installation and Credentials
+# DARWIN LIVE Installation and Runtime Profiles
 
-This document is for the real provider-backed deployment. Do not use it for the
-zero-credential judge path; use [DEMO.md](DEMO.md) instead.
+This document covers the real provider-backed deployment and the public
+read-only showcase. Do not use the public showcase as an operator control room;
+use [DEMO.md](DEMO.md) for the zero-credential judge path.
+
+## Runtime profiles
+
+### JUDGE DEMO
+
+```dotenv
+DEMO_MODE=true
+FINANCIAL_WRITES_ENABLED=false
+PUBLIC_SHOWCASE_ENABLED=false
+```
+
+Synthetic fixtures, zero credentials, no external LLM, no live Binance reads, and
+financial writes blocked. The root Compose path serves `/demo`.
+
+### PUBLIC LIVE SHOWCASE
+
+```dotenv
+DEMO_MODE=false
+FINANCIAL_WRITES_ENABLED=false
+PUBLIC_SHOWCASE_ENABLED=true
+```
+
+Real LLM inference, real public Binance market evidence, real scheduled worker
+cycles, persisted AgentRun decisions, and public read-only `/showcase`. No real
+financial write is allowed; a policy-passing BUY/SELL is stored as a local
+`FINANCIAL_WRITES_DISABLED` safe-live outcome rather than an executed or failed
+exchange order. No owner login is required for `/showcase`.
+
+### REAL LIVE TRADING
+
+```dotenv
+DEMO_MODE=false
+FINANCIAL_WRITES_ENABLED=true
+PUBLIC_SHOWCASE_ENABLED=false
+```
+
+Recommended operator profile. Financial execution may proceed only through the
+existing policy, budget, emergency-stop, HUMAN_APPROVAL/Codex confirmation,
+revalidation, idempotency, and transport gates. This repository does not claim
+funded E2E verification.
 
 ## Requirements
 
@@ -88,15 +129,22 @@ production live deployment.
 
 ## Common LIVE settings
 
-Both live modes require:
+Both live profiles require:
 
 ```dotenv
 DEMO_MODE=false
+FINANCIAL_WRITES_ENABLED=false  # public showcase; true only for real trading
+PUBLIC_SHOWCASE_ENABLED=false   # true only for the public read-only showcase
 DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DATABASE
 OPENAI_API_KEY=<real backend-only model-provider key>
 OWNER_PASSWORD_HASH=<Argon2id hash; never plaintext>
 FRONTEND_ORIGIN=https://your-real-frontend.example
 ```
+
+`FINANCIAL_WRITES_ENABLED=false` is an additional final write authorization
+boundary. `DEMO_MODE=true` always wins and blocks writes even if the flag is
+mistakenly set to true. Neither flag bypasses existing policy, budget,
+emergency-stop, approval, Codex confirmation, revalidation, or transport gates.
 
 `OPENAI_MODEL` defaults to the current configured model:
 
