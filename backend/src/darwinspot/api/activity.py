@@ -57,6 +57,34 @@ from darwinspot.storage.repository import Repository
 router = APIRouter(tags=["activity"])
 
 
+def _run_decision(run: AgentRun) -> dict[str, Any]:
+    if not run.decision:
+        return {}
+    try:
+        value = json.loads(run.decision)
+    except json.JSONDecodeError:
+        return {}
+    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
+
+
+def _run_system_result(run: AgentRun) -> tuple[str, str | None]:
+    decision = _run_decision(run)
+    if decision.get("action") == "HOLD":
+        return "SKIPPED", "NO_TRADE"
+    if run.result_state in {
+        "POLICY_REJECTED",
+        "SIGNAL_SUPPRESSED",
+        "NO_EFFECTIVE_SYMBOLS",
+        "EMERGENCY_STOP",
+    }:
+        return "SKIPPED", run.result_state
+    if run.result_state in {"WAITING_FOR_APPROVAL", "AUTO_AUTHORIZED"}:
+        return "PENDING", run.result_state
+    if run.result_state == "FAILED":
+        return "FAILED", run.rationale
+    return run.result_state, None
+
+
 @dataclass
 class PendingOAuth:
     connection_id: str
@@ -412,6 +440,11 @@ def activity(
             "timestamp": run.started_at,
             "trigger": run.trigger_type,
             "rationale": run.rationale,
+            "decision": _run_decision(run).get("action"),
+            "pair": _run_decision(run).get("pair"),
+            "confidence": _run_decision(run).get("confidence"),
+            "systemOutcome": _run_system_result(run)[0],
+            "reason": _run_system_result(run)[1],
         }
         for run in runs
     ]
@@ -437,6 +470,16 @@ def activity(
                 "executionTransport": intent.execution_transport,
                 "authorizationSource": intent.authorization_source,
                 "authorizedAt": intent.authorized_at,
+                "decision": intent.side,
+                "confidence": str(intent.confidence),
+                "systemOutcome": (
+                    "EXECUTED"
+                    if intent.local_state == "FILLED"
+                    else "FAILED"
+                    if intent.local_state in {"REJECTED_EXCHANGE", "EXPIRED"}
+                    else "PENDING"
+                ),
+                "reason": intent.budget_result if intent.budget_result != "PASS" else None,
             }
             for intent in intents
         ]
