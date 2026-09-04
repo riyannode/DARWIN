@@ -79,6 +79,8 @@ def _public_text(
     )
     term_pattern = "|".join(account_terms)
     for asset, numeric_value in private_account_values:
+        if numeric_value not in text:
+            continue
         escaped_value = re.escape(numeric_value)
         text = re.sub(
             rf"(?i)(?:\b(?:{term_pattern})\b[^\n.;,]{{0,80}}?{escaped_value}(?:\s+{re.escape(asset)})?"
