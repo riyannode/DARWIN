@@ -10,7 +10,7 @@ from typing import Any, Literal, cast
 
 from darwinspot.binance.client import ToolCall, ToolDescriptor
 from darwinspot.config import Settings
-from darwinspot.execution.demo_guard import ensure_financial_write_allowed
+from darwinspot.execution.demo_guard import FinancialWriteBlocked, ensure_financial_write_allowed
 
 
 class CodexTransportError(RuntimeError):
@@ -79,7 +79,11 @@ async def resolve_pending_confirmation(intent_id: str, action: ElicitationAction
         return False
     transport, request_id = pending
     if action == "accept":
-        ensure_financial_write_allowed()
+        try:
+            ensure_financial_write_allowed()
+        except FinancialWriteBlocked:
+            await discard_pending_confirmation(intent_id)
+            raise
     try:
         await transport.resolve_elicitation(request_id, action)
     except CodexTransportError:

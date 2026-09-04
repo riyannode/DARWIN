@@ -302,7 +302,7 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
                 transport = getattr(client, "transport", None)
                 if transport is not None:
                     await transport.close()
-            if result.state in {"AUTH_REQUIRED", "CANCEL_PENDING"}:
+            if result.state in {"AUTH_REQUIRED", "CANCEL_PENDING", "CANCEL_BLOCKED"}:
                 mark_retry(
                     db,
                     message_id=row.id,

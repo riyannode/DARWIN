@@ -20,8 +20,9 @@ routes and all mutation controls retain owner authentication.
 
 `FINANCIAL_WRITES_ENABLED=false` is the final write authorization seam after
 policy, budget, emergency stop, approval, revalidation, and transport checks.
-In safe-live mode a policy-passing BUY/SELL completes locally as
-`FINANCIAL_WRITES_DISABLED`, with public system outcome `SKIPPED` and reason
+In safe-live mode a policy-passing BUY/SELL completes the decision cycle locally
+as `FINANCIAL_WRITES_DISABLED` before any intent, proposal, or financial adapter
+is invoked. Its public system outcome is `SKIPPED` with reason
 `FINANCIAL_WRITES_DISABLED`; it is not an exchange failure and has no Binance
 order ID.
 
@@ -250,6 +251,8 @@ REVALIDATING -> WAITING_FOR_EXECUTION_CONFIRMATION
 WAITING_FOR_EXECUTION_CONFIRMATION -> SUBMISSION_UNKNOWN
 REVALIDATING -> SUBMITTING
 SUBMITTING -> OPEN / PARTIALLY_FILLED / FILLED / SUBMISSION_UNKNOWN
+OPEN -> CANCEL_BLOCKED when the global financial-write gate is closed
+CANCEL_BLOCKED -> CANCEL_PENDING when the cancellation retry is permitted
 SUBMISSION_UNKNOWN -> existing reconciliation states
 ```
 

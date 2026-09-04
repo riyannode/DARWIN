@@ -80,9 +80,11 @@ PUBLIC_SHOWCASE_ENABLED=true
 
 This uses the real model, real Binance public market evidence, real scheduled
 worker decisions, persisted AgentRun evidence, and a public read-only
-`http://localhost:3000/showcase` page. Financial writes are disabled and no
-Binance order is created. Judges do not need owner credentials to inspect the
-showcase; operator configuration and mutations remain private.
+`http://localhost:3000/showcase` page. Financial writes are disabled; a
+policy-passing BUY/SELL completes locally as `FINANCIAL_WRITES_DISABLED` before
+any intent or proposal is created. No Binance order is created. Judges do not
+need owner credentials to inspect the showcase; operator configuration and
+mutations remain private.
 
 ### REAL LIVE TRADING
 

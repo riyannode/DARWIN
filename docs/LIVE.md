@@ -27,9 +27,9 @@ PUBLIC_SHOWCASE_ENABLED=true
 
 Real LLM inference, real public Binance market evidence, real scheduled worker
 cycles, persisted AgentRun decisions, and public read-only `/showcase`. No real
-financial write is allowed; a policy-passing BUY/SELL is stored as a local
-`FINANCIAL_WRITES_DISABLED` safe-live outcome rather than an executed or failed
-exchange order. No owner login is required for `/showcase`.
+financial write is allowed; a policy-passing BUY/SELL completes the cycle as a
+local `FINANCIAL_WRITES_DISABLED` safe-live outcome before any intent or proposal
+is created. No owner login is required for `/showcase`.
 
 ### REAL LIVE TRADING
 

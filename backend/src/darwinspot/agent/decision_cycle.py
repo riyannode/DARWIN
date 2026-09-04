@@ -314,6 +314,8 @@ class DecisionCycle:
             "policy": decision_evidence["execution_policy"],
             "reference_price": str(market.price),
         }
+        persisted_evidence["policy"] = policy_evidence
+        repo.record_run_evidence(run_id, persisted_evidence)
         if not evaluation.allowed:
             log_event("DECISION_POLICY_REJECTED", run_id=run_id, reason=evaluation.reason)
             return "POLICY_REJECTED"
@@ -327,6 +329,14 @@ class DecisionCycle:
         ):
             log_event("DECISION_SIGNAL_SUPPRESSED", run_id=run_id, pair=decision.pair)
             return "SIGNAL_SUPPRESSED"
+        if not settings.financial_writes_enabled:
+            log_event(
+                "DECISION_FINANCIAL_WRITES_DISABLED",
+                run_id=run_id,
+                action=decision.action,
+                pair=decision.pair,
+            )
+            return "FINANCIAL_WRITES_DISABLED"
         operator_user_id = str(settings.telegram_operator_user_id or "WEB_OWNER")
         operator_chat_id = str(settings.telegram_operator_chat_id or "WEB_OWNER")
         approval_id: str | None = None

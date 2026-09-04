@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -10,13 +11,21 @@ from sqlalchemy.orm import Session
 
 from darwinspot.config import get_settings
 from darwinspot.domain import now_utc
+from darwinspot.execution.universe import parse_supported_symbols
 from darwinspot.storage.database import get_db
-from darwinspot.storage.models import AgentRun, TradeIntent
+from darwinspot.storage.models import AgentConfig, AgentRun, TradeIntent
 from darwinspot.storage.repository import Repository
 
 router = APIRouter(tags=["showcase"])
 _DECISION_TRIGGERS = ("SCHEDULED", "RUN_ONCE")
 _INTERVALS = ("15m", "1h", "4h")
+_REASON_CODES = {
+    "max_order_notional exceeded": "MAX_ORDER_NOTIONAL",
+    "buy exceeds available budget": "BUDGET_EXCEEDED",
+    "max_open_actionable_intents reached": "MAX_CONCURRENT_TRADES",
+    "symbol is not in allowed_symbols": "SYMBOL_NOT_ALLOWED",
+    "symbol is not in configured trading universe": "SYMBOL_NOT_CONFIGURED",
+}
 _CANDLE_FIELDS = (
     "open_time",
     "close_time",
@@ -27,13 +36,25 @@ _CANDLE_FIELDS = (
     "volume",
     "quote_volume",
 )
-_REASON_CODES = {
-    "max_order_notional exceeded": "MAX_ORDER_NOTIONAL",
-    "buy exceeds available budget": "BUDGET_EXCEEDED",
-    "max_open_actionable_intents reached": "MAX_CONCURRENT_TRADES",
-    "symbol is not in allowed_symbols": "SYMBOL_NOT_ALLOWED",
-    "symbol is not in configured trading universe": "SYMBOL_NOT_CONFIGURED",
-}
+_REDACT_PRIVATE_VALUE = re.compile(
+    r"(?i)\b(?:api[_ -]?(?:key|secret)|secret|password|bearer|cookie|session|oauth|"
+    r"telegram|private[_ -]?key)\b\s*[:=]\s*[^\s,;]+"
+)
+_REDACT_ACCOUNT_VALUE = re.compile(
+    r"(?i)\b(?:balance|balances|free|locked|account|portfolio|wallet|equity|funds?)\b\s*[:=]?\s*[$€£]?\d+(?:\.\d+)?"
+)
+_REDACT_ACCOUNT_PHRASE = re.compile(
+    r"(?i)\b(?:account|portfolio|wallet|equity|available balance|free balance|"
+    r"locked balance)\b[^.;,\n]{0,100}"
+)
+
+
+def _public_text(value: Any, *, max_length: int = 2000) -> str:
+    text = value if isinstance(value, str) else str(value)
+    text = _REDACT_ACCOUNT_PHRASE.sub("[REDACTED PRIVATE ACCOUNT DETAIL]", text)
+    text = _REDACT_ACCOUNT_VALUE.sub("[REDACTED PRIVATE ACCOUNT DETAIL]", text)
+    text = _REDACT_PRIVATE_VALUE.sub("[REDACTED]", text)
+    return text[:max_length]
 
 
 def _object(value: Any) -> dict[str, Any]:
@@ -178,6 +199,19 @@ def _evidence_timestamp(evidence: dict[str, Any]) -> datetime | None:
 def _policy(run: AgentRun, intent: TradeIntent | None, action: str | None) -> dict[str, Any]:
     if action == "HOLD":
         return {"result": "NOT_APPLICABLE", "reason": "HOLD does not create an execution policy"}
+    if run.result_state == "FINANCIAL_WRITES_DISABLED":
+        stored = _object(_run_json(run.evidence_timestamps).get("policy"))
+        checks = {
+            key: value
+            for key, value in stored.items()
+            if key.endswith("_result") and isinstance(value, str)
+        }
+        return {
+            "result": "PASS",
+            "reason": "deterministic policy passed before financial write closure",
+            "reasonCode": "FINANCIAL_WRITES_DISABLED",
+            "checks": checks,
+        }
     if run.result_state == "POLICY_REJECTED":
         reason = "deterministic policy rejected the decision"
         if intent is not None:
@@ -185,7 +219,7 @@ def _policy(run: AgentRun, intent: TradeIntent | None, action: str | None) -> di
             reason = str(stored.get("reason") or reason)
         return {
             "result": "REJECTED",
-            "reason": reason,
+            "reason": _public_text(reason),
             "reasonCode": _REASON_CODES.get(reason, "POLICY_REJECTED"),
         }
     if intent is not None:
@@ -207,16 +241,49 @@ def _policy(run: AgentRun, intent: TradeIntent | None, action: str | None) -> di
             result = "REJECTED"
         return {
             "result": result,
-            "reason": reason if isinstance(reason, str) else None,
+            "reason": _public_text(reason) if isinstance(reason, str) else None,
             "reasonCode": _REASON_CODES.get(reason) if isinstance(reason, str) else None,
             "checks": checks,
         }
-    return {"result": "NOT_AVAILABLE", "reason": run.rationale}
+    return {"result": "NOT_AVAILABLE", "reason": _public_text(run.rationale)}
 
 
-def _system_result(run: AgentRun, action: str | None) -> tuple[str, str | None]:
+def _system_result(
+    run: AgentRun, intent: TradeIntent | None, action: str | None
+) -> tuple[str, str | None]:
     if run.result_state == "FAILED":
-        return "FAILED", run.rationale or "latest scheduled run failed"
+        return "FAILED", _public_text(run.rationale or "latest scheduled run failed")
+    if intent is not None:
+        intent_state = intent.local_state
+        if intent_state == "FILLED":
+            return "EXECUTED", None
+        if intent_state == "FINANCIAL_WRITES_DISABLED":
+            return "SKIPPED", "FINANCIAL_WRITES_DISABLED"
+        if intent_state in {"REJECTED_EXCHANGE", "EXPIRED"}:
+            return "FAILED", intent_state
+        if intent_state in {
+            "REJECTED",
+            "APPROVAL_EXPIRED",
+            "REVALIDATION_FAILED",
+            "REJECTED_BUDGET",
+            "BLOCKED",
+            "CANCEL_BLOCKED",
+            "CANCELED",
+        }:
+            return "SKIPPED", intent_state
+        if intent_state in {
+            "WAITING_FOR_APPROVAL",
+            "APPROVED",
+            "AUTO_AUTHORIZED",
+            "REVALIDATING",
+            "WAITING_FOR_EXECUTION_CONFIRMATION",
+            "SUBMITTING",
+            "SUBMISSION_UNKNOWN",
+            "OPEN",
+            "PARTIALLY_FILLED",
+            "CANCEL_PENDING",
+        }:
+            return "PENDING", intent_state
     if action == "HOLD":
         return "SKIPPED", "NO_TRADE"
     if run.result_state in {
@@ -250,10 +317,16 @@ def _decision(run: AgentRun) -> dict[str, Any]:
         "confidence",
     ):
         value = raw.get(field)
-        if isinstance(value, (str, int, float)) or value is None:
+        if field == "rationale" and isinstance(value, str):
+            result[field] = _public_text(value)
+        elif isinstance(value, (str, int, float)) or value is None:
             result[field] = value
-    result["supporting_factors"] = _string_list(raw.get("supporting_factors"))
-    result["risk_factors"] = _string_list(raw.get("risk_factors"))
+    result["supporting_factors"] = [
+        _public_text(item) for item in _string_list(raw.get("supporting_factors"))
+    ]
+    result["risk_factors"] = [
+        _public_text(item) for item in _string_list(raw.get("risk_factors"))
+    ]
     return result
 
 
@@ -264,7 +337,7 @@ def _summary(
 ) -> dict[str, Any]:
     decision = _decision(run)
     action = decision.get("action") if isinstance(decision.get("action"), str) else None
-    outcome, reason = _system_result(run, action)
+    outcome, reason = _system_result(run, intent, action)
     return {
         "id": run.id,
         "trigger": run.trigger_type,
@@ -316,7 +389,9 @@ def showcase(db: Session = Depends(get_db)) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="public showcase is disabled")
 
     repo = Repository(db)
-    config = repo.get_or_create_agent()
+    config = db.scalar(select(AgentConfig).limit(1))
+    if config is None:
+        raise HTTPException(status_code=404, detail="public showcase state is unavailable")
     mandate = repo.current_mandate()
     runs = list(
         db.scalars(
@@ -365,10 +440,10 @@ def showcase(db: Session = Depends(get_db)) -> dict[str, Any]:
         "executionMode": config.mode,
         "agentState": config.state,
         "emergencyStop": config.emergency_stop,
-        "configuredUniverse": list(repo.supported_symbols()),
+        "configuredUniverse": list(parse_supported_symbols(config.supported_symbols)),
         "allowedSymbols": allowed_symbols,
         "effectiveUniverse": latest_evidence["pairSelection"]["effectiveSymbols"],
-        "mandate": repo.mandate_text(mandate) if mandate is not None else None,
+        "mandate": _public_text(repo.mandate_text(mandate)) if mandate is not None else None,
         "lastDecisionAt": latest.completed_at if latest is not None else None,
         "lastEvidenceAt": last_evidence_at,
         "freshness": freshness,

@@ -347,7 +347,13 @@ class ApprovedExecution:
         try:
             ensure_financial_write_allowed()
         except FinancialWriteBlocked as exc:
-            return ExecutionResult("BLOCKED", exc.reason_code)
+            with account_execution_lock(
+                self.repo.db, self.settings.binance_account_lock_key
+            ):
+                intent.local_state = "CANCEL_BLOCKED"
+                intent.updated_at = datetime.now(UTC)
+                self.repo.db.commit()
+            return ExecutionResult("CANCEL_BLOCKED", exc.reason_code)
         with account_execution_lock(self.repo.db, self.settings.binance_account_lock_key):
             intent.local_state = "CANCEL_PENDING"
             intent.updated_at = datetime.now(UTC)
