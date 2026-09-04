@@ -30,12 +30,16 @@ The hard backend guardrails are separate:
   count, not an open-position count;
 - the rolling 24-hour BUY budget is stored separately in `BudgetVersion`;
 - the configured Spot universe is persisted separately in
-  `AgentConfig.supported_symbols`;
+  `AgentConfig.supported_symbols`, bootstrapping to `BTCUSDT`, `ETHUSDT`,
+  `BNBUSDT`, `SOLUSDT`, and `XRPUSDT`;
 - emergency stop remains backend-authoritative.
 
 Effective symbols are the intersection of the configured universe, allowed
 symbols, and currently valid Binance Spot/USDT metadata with required filters.
-Configured symbols do not automatically authorize trading.
+Configured symbols do not automatically authorize trading. DARWIN scans every
+effective symbol with 10 closed `15m` and `1h` candles before pair selection,
+then fetches 48 closed candles for `15m`, `1h`, and `4h` only for the selected
+pair. The five-symbol bootstrap is not a runtime scan limit or top-five strategy.
 
 ## Authority model
 
@@ -68,9 +72,15 @@ BUY budget, balances, filters, open-order conflict, freshness, and emergency
 stop.
 
 DARWIN reasons from current ticker/account/order evidence plus real typed
-CLOSED Binance Spot OHLCV: 48 candles each for 15m, 1h, and 4h. The bounded
+CLOSED Binance Spot OHLCV. Candidate scanning uses 10 closed candles each for
+`15m` and `1h` across every effective symbol; detailed reasoning uses 48 closed
+candles each for `15m`, `1h`, and `4h` only for the selected pair. Historical
 bars inform BUY/SELL/HOLD reasoning, do not authorize trades, exclude the
 currently forming candle, and do not guarantee trend prediction.
+
+Candidate history failures exclude only the affected symbol and are recorded
+as sanitized audit evidence. If every candidate fails validation, pair selection
+is skipped and the cycle returns a fail-closed no-candidate result.
 
 ## State and safety
 

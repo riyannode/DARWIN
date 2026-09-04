@@ -18,16 +18,20 @@ Telegram. Public historical market data uses the credential-free Binance Spot
 `GET /api/v3/klines` endpoint.
 
 DARWIN reasons from current ticker, account, order, and filter snapshots plus
-real typed CLOSED Binance Spot OHLCV: 48 candles each for 15m, 1h, and 4h.
-Historical bars are bounded evidence for model reasoning, not authorization or a
-guaranteed trend prediction.
+real typed CLOSED Binance Spot OHLCV. It scans every effective configured
+symbol with 10 closed candles each for 15m and 1h, then fetches 48 closed
+candles each for 15m, 1h, and 4h only for the selected pair. Historical bars
+are bounded evidence for model reasoning, not authorization or a guaranteed
+trend prediction.
 
 ## Runtime flow
 
 ```text
 24/7 scheduler
   -> lightweight Spot/USDT market universe
-  -> effective universe and one selected pair
+  -> effective universe
+  -> lightweight 15m/1h candidate scan for every effective symbol
+  -> DARWIN chooses one candidate pair
   -> selected-pair ticker + 15m/1h/4h closed OHLCV + account evidence
   -> DARWIN decision: BUY / SELL / HOLD
   -> mandate + risk + budget + execution-policy gate
@@ -73,9 +77,10 @@ never chooses trades or evaluates DARWIN policy.
   `reject:<approval_id>`; all intent data is resolved server-side.
 - Telegram user ID, chat ID, webhook secret, and bot token are backend-only.
 - Approval TTL defaults to 90 seconds and is bounded to 30..180 seconds.
-- The persisted configured Spot universe defaults to exactly `BTCUSDT`,
-  `ETHUSDT`, `BNBUSDT`, and `SOLUSDT`; an owner can add/remove valid Spot/USDT
-  symbols without source changes. The current structured policy contains exact
+- The persisted configured Spot universe bootstraps to exactly `BTCUSDT`,
+  `ETHUSDT`, `BNBUSDT`, `SOLUSDT`, and `XRPUSDT`; this is not a runtime limit or
+  dynamic top-five strategy. An owner can add/remove valid Spot/USDT symbols
+  without source changes. The current structured policy contains exact
   `allowed_symbols`,
   `max_order_notional`, and `max_open_actionable_intents`.
 - Proposal admission is atomic under PostgreSQL coordination.
@@ -87,6 +92,10 @@ never chooses trades or evaluates DARWIN policy.
   cancellation path. Model CANCEL/CANCEL_REPLACE and direct web cancellation are
   disabled.
 - Transfers and withdrawals are unsupported and fail closed.
+- `market_history` uses the credential-free public Binance Spot adapter for
+  candidate scanning and selected-pair detail. Candidate scanning requests
+  `limit=11` and keeps 10 closed candles per `15m`/`1h` interval; final detail
+  requests `limit=49` and keeps 48 closed candles per `15m`/`1h`/`4h` interval.
 
 ## Components
 
@@ -200,5 +209,5 @@ HOSTNAME=127.0.0.1 PORT=3000 pnpm start
 
 The local verification harness is ignored under `.local-tests/` and is never
 part of the production source or pull request. It covers the bounded Binance
-kline mapper, closed-candle filtering, freshness, selected-pair ordering, and
-persisted decision evidence.
+kline mapper, closed-candle filtering, freshness, count-independent candidate
+scanning, selected-pair ordering, and persisted decision evidence.

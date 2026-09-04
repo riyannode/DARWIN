@@ -16,6 +16,7 @@ class MarketSnapshot(BaseModel):
 
 MarketInterval = Literal["15m", "1h", "4h"]
 SUPPORTED_MARKET_INTERVALS: tuple[MarketInterval, ...] = ("15m", "1h", "4h")
+CANDIDATE_MARKET_INTERVALS: tuple[MarketInterval, ...] = ("15m", "1h")
 MARKET_INTERVAL_SECONDS: dict[MarketInterval, int] = {
     "15m": 15 * 60,
     "1h": 60 * 60,
@@ -23,6 +24,8 @@ MARKET_INTERVAL_SECONDS: dict[MarketInterval, int] = {
 }
 HISTORY_CANDLE_COUNT = 48
 HISTORY_REQUEST_LIMIT = HISTORY_CANDLE_COUNT + 1
+CANDIDATE_CANDLE_COUNT = 10
+CANDIDATE_HISTORY_REQUEST_LIMIT = CANDIDATE_CANDLE_COUNT + 1
 MARKET_HISTORY_MAX_STALENESS_PERIODS = 2
 
 
@@ -48,6 +51,18 @@ class MarketHistorySnapshot(BaseModel):
     candles: list[MarketCandle] = Field(
         min_length=HISTORY_CANDLE_COUNT,
         max_length=HISTORY_CANDLE_COUNT,
+    )
+    observed_at: datetime
+
+
+class CandidateMarketHistorySnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    interval: MarketInterval
+    candles: list[MarketCandle] = Field(
+        min_length=CANDIDATE_CANDLE_COUNT,
+        max_length=CANDIDATE_CANDLE_COUNT,
     )
     observed_at: datetime
 

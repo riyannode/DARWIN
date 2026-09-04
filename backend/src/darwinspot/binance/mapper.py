@@ -6,12 +6,16 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
 from darwinspot.binance.schemas import (
+    CANDIDATE_CANDLE_COUNT,
+    CANDIDATE_HISTORY_REQUEST_LIMIT,
+    CANDIDATE_MARKET_INTERVALS,
     HISTORY_CANDLE_COUNT,
     HISTORY_REQUEST_LIMIT,
     MARKET_HISTORY_MAX_STALENESS_PERIODS,
     MARKET_INTERVAL_SECONDS,
     SUPPORTED_MARKET_INTERVALS,
     BalanceSnapshot,
+    CandidateMarketHistorySnapshot,
     MarketCandle,
     MarketHistorySnapshot,
     MarketSnapshot,
@@ -424,14 +428,16 @@ def _kline_trade_count(value: Any) -> int | None:
     return count
 
 
-def map_market_history(
+def _map_market_history_payload(
     payload: Any,
     *,
     symbol: str,
     interval: str,
+    candle_count: int,
+    request_limit: int,
     now: datetime | None = None,
     observed_at: datetime | None = None,
-) -> MarketHistorySnapshot:
+) -> dict[str, Any]:
     """Map and validate the bounded closed-candle response from Spot /api/v3/klines."""
     if (
         not re.fullmatch(r"[A-Z0-9]{5,20}", symbol)
@@ -449,7 +455,7 @@ def map_market_history(
         raise BinanceMappingError("Binance kline response is outside the bounded array shape")
 
     raw_klines = cast(list[Any], payload)
-    if len(raw_klines) > HISTORY_REQUEST_LIMIT:
+    if len(raw_klines) > request_limit:
         raise BinanceMappingError("Binance kline response is outside the bounded array shape")
     closed: list[MarketCandle] = []
     previous_open_time: datetime | None = None
@@ -510,19 +516,63 @@ def map_market_history(
 
     if unfinished_count > 1:
         raise BinanceMappingError("Binance kline response contains multiple unfinished candles")
-    if len(closed) < HISTORY_CANDLE_COUNT:
+    if len(closed) < candle_count:
         raise BinanceMappingError("Binance kline response contains too few closed candles")
-    closed = closed[-HISTORY_CANDLE_COUNT:]
+    closed = closed[-candle_count:]
     interval_seconds = MARKET_INTERVAL_SECONDS[interval_key]
     newest_staleness = current_time - closed[-1].close_time
     max_staleness = timedelta(seconds=interval_seconds * MARKET_HISTORY_MAX_STALENESS_PERIODS)
     if newest_staleness < timedelta(0) or newest_staleness > max_staleness:
         raise BinanceMappingError("Binance market history is stale")
-    return MarketHistorySnapshot(
-        symbol=symbol,
-        interval=interval_key,
-        candles=closed,
-        observed_at=observed,
+    return {
+        "symbol": symbol,
+        "interval": interval_key,
+        "candles": closed,
+        "observed_at": observed,
+    }
+
+
+def map_market_history(
+    payload: Any,
+    *,
+    symbol: str,
+    interval: str,
+    now: datetime | None = None,
+    observed_at: datetime | None = None,
+) -> MarketHistorySnapshot:
+    return MarketHistorySnapshot.model_validate(
+        _map_market_history_payload(
+            payload,
+            symbol=symbol,
+            interval=interval,
+            candle_count=HISTORY_CANDLE_COUNT,
+            request_limit=HISTORY_REQUEST_LIMIT,
+            now=now,
+            observed_at=observed_at,
+        )
+    )
+
+
+def map_candidate_market_history(
+    payload: Any,
+    *,
+    symbol: str,
+    interval: str,
+    now: datetime | None = None,
+    observed_at: datetime | None = None,
+) -> CandidateMarketHistorySnapshot:
+    if interval not in CANDIDATE_MARKET_INTERVALS:
+        raise BinanceMappingError("candidate market-history interval is unsupported")
+    return CandidateMarketHistorySnapshot.model_validate(
+        _map_market_history_payload(
+            payload,
+            symbol=symbol,
+            interval=interval,
+            candle_count=CANDIDATE_CANDLE_COUNT,
+            request_limit=CANDIDATE_HISTORY_REQUEST_LIMIT,
+            now=now,
+            observed_at=observed_at,
+        )
     )
 
 

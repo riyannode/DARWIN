@@ -49,10 +49,11 @@ withdrawals, and options are outside DARWIN execution scope.
 ## Evidence scope
 
 DARWIN reasons from current ticker, account, order, and filter snapshots plus
-real typed CLOSED Binance Spot OHLCV: 48 candles each for 15m, 1h, and 4h.
-The bounded historical bars inform model reasoning but do not authorize trades
-or guarantee trend prediction. Their newest closed candle must be no more than
-two interval periods old; the currently forming candle is excluded.
+real typed CLOSED Binance Spot OHLCV. Candidate scanning uses 10 closed candles
+for each of `15m` and `1h` across every effective symbol; detailed reasoning
+uses 48 closed candles for each of `15m`, `1h`, and `4h` only for the selected
+pair. Historical bars are bounded evidence, not authorization or guaranteed
+trend prediction.
 
 ## Verification status
 
@@ -80,10 +81,12 @@ Bot API verification. No funded trade is required for the initial acceptance.
 2. Show `AUTH_REQUIRED`/`UNVERIFIED` Codex state.
 3. Configure one Trading Mandate, hard guardrails, budget, and mode.
 4. Show the 24/7 monitoring/decision architecture.
-5. In `AUTO_BOUNDED`, show an autonomous signal and bounded execution path
+5. Show bounded candidate history comparison across the configured effective
+   universe; do not describe the five bootstrap symbols as dynamically ranked.
+6. In `AUTO_BOUNDED`, show an autonomous signal and bounded execution path
    without per-order approval.
-6. In `HUMAN_APPROVAL`, show a supervised proposal and fresh revalidation.
-7. Decline the first transport confirmation and show zero trade.
+7. In `HUMAN_APPROVAL`, show a supervised proposal and fresh revalidation.
+8. Decline the first transport confirmation and show zero trade.
 
 ## Replication
 

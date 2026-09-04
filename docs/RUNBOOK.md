@@ -115,8 +115,9 @@ failure/retry state and performs no fabricated Binance read or write.
 3. Set exact allowed symbols, Max Per Trade, and Max Concurrent Trades.
 4. Set the rolling 24-hour BUY budget.
 5. Configure the persisted Spot universe. It bootstraps to `BTCUSDT`, `ETHUSDT`,
-   `BNBUSDT`, and `SOLUSDT`; adding a symbol here does not authorize it in the
-   mandate.
+   `BNBUSDT`, `SOLUSDT`, and `XRPUSDT`; this is not a runtime limit or top-five
+   strategy. Add/remove valid Spot/USDT symbols as needed; adding a symbol here
+   does not authorize it in the mandate.
 6. Choose `AUTO_BOUNDED` for autonomous execution without per-order approval,
    or `HUMAN_APPROVAL` for supervised execution through Codex Agent OS.
 7. Confirm the UI shows Codex `AUTH_REQUIRED`/`UNVERIFIED` until manual setup.
@@ -152,8 +153,9 @@ are idempotent; unauthorized callbacks fail closed.
 ```text
 DecisionCycle
   -> lightweight Spot/USDT market universe and effective intersection
+  -> bounded 15m/1h candidate history for every effective symbol
   -> one selected pair
-  -> current ticker + 15m/1h/4h closed OHLCV + account evidence
+  -> selected-pair current ticker + 15m/1h/4h closed OHLCV + account evidence
   -> DARWIN BUY/SELL/HOLD
   -> deterministic policy gate
   -> HUMAN_APPROVAL: WAITING_FOR_APPROVAL + Telegram outbox
@@ -169,6 +171,14 @@ DecisionCycle
 
 Reject and expiry are no-write terminal states. Approval never mutates symbol,
 side, quantity, price, or final Binance arguments.
+
+Candidate scanning is count-independent and uses the complete effective set,
+up to the existing configured-universe validation maximum of 100 symbols. Each
+candidate receives 10 closed candles for `15m` and `1h`; no `4h` candidate scan
+or 48-candle candidate fetch is performed. A failed candidate is excluded and
+recorded in sanitized audit evidence. If all candidates fail, no pair selection
+or financial work occurs. Final detail remains 48 closed candles for each
+`15m`, `1h`, and `4h` interval for only the selected pair.
 
 ## 8. Emergency stop
 

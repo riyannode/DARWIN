@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from darwinspot.agent.candidate_scan import scan_candidate_history
 from darwinspot.agent.runtime import AgentRuntime
 from darwinspot.binance.client import BinanceAgentOSClient, ToolCatalog
 from darwinspot.binance.mapper import (
@@ -90,10 +91,50 @@ class DecisionCycle:
             )
             log_event("DECISION_NO_EFFECTIVE_SYMBOLS", run_id=run_id)
             return "NO_EFFECTIVE_SYMBOLS"
+        market_data_client = BinanceSpotMarketDataClient(
+            get_settings().binance_spot_api_base_url
+        )
+        candidate_scan = await scan_candidate_history(
+            market_data_client, sorted(eligible_symbols)
+        )
+        for symbol, error_code in candidate_scan.failures.items():
+            repo.record_audit_event(
+                trigger="DECISION_CANDIDATE_EXCLUDED",
+                state="CANDIDATE_EXCLUDED",
+                model=get_settings().openai_model,
+                evidence={"symbol": symbol, "error_code": error_code},
+            )
+        candidate_symbols = frozenset(candidate_scan.histories)
+        if not candidate_symbols:
+            repo.record_audit_event(
+                trigger="DECISION_NO_EFFECTIVE_SYMBOLS",
+                state="NO_EFFECTIVE_SYMBOLS",
+                model=get_settings().openai_model,
+                evidence={
+                    "configuredSymbols": list(configured_symbols),
+                    "mandateAllowedSymbols": sorted(policy.allowed_symbols),
+                    "invalidConfiguredSymbols": sorted(universe.invalid_configured),
+                    "candidateFailures": candidate_scan.failures,
+                },
+            )
+            log_event("DECISION_NO_EFFECTIVE_SYMBOLS", run_id=run_id)
+            return "NO_EFFECTIVE_SYMBOLS"
+        candidate_market = [
+            item for item in eligible_market if item["symbol"] in candidate_symbols
+        ]
+        candidate_history_evidence = {
+            symbol: {
+                interval: snapshot.model_dump(mode="json")
+                for interval, snapshot in histories.items()
+            }
+            for symbol, histories in candidate_scan.histories.items()
+        }
         selection = await runtime.choose_pair(
             {
-                "market_universe": eligible_market,
-                "effective_symbols": sorted(eligible_symbols),
+                "market_universe": candidate_market,
+                "effective_symbols": sorted(candidate_symbols),
+                "candidate_symbols": sorted(candidate_symbols),
+                "candidate_history": candidate_history_evidence,
                 "mandate": {"trading_mandate": repo.mandate_text(mandate)},
                 "execution_policy": {
                     "allowed_symbols": sorted(policy.allowed_symbols),
@@ -107,7 +148,7 @@ class DecisionCycle:
             }
         )
         pair = selection.pair
-        if pair not in eligible_symbols:
+        if pair not in candidate_symbols:
             repo.record_audit_event(
                 trigger="DECISION_POLICY_REJECTED",
                 state="POLICY_REJECTED",
@@ -126,9 +167,6 @@ class DecisionCycle:
             "get_ticker",
             await client.call_tool(catalog.arguments("market", {"symbol": pair})),
             observed_at=observed_at,
-        )
-        market_data_client = BinanceSpotMarketDataClient(
-            get_settings().binance_spot_api_base_url
         )
         history_snapshots = await asyncio.gather(
             *(
@@ -184,6 +222,7 @@ class DecisionCycle:
 
         evidence: dict[str, Any] = {
             "selected_pair": pair,
+            "candidate_history": candidate_history_evidence,
             "market": market.model_dump(mode="json"),
             "market_history": {
                 interval: snapshot.model_dump(mode="json")

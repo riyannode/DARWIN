@@ -3,8 +3,10 @@ Return exactly one PairSelection JSON object. Choose one exact uppercase symbol 
 market_universe evidence. Use only symbols whose status is TRADING, quote_asset is USDT, and
 spot_trading_allowed is true. Do not invent or normalize symbols. Do not choose futures, margin,
 options, transfers, or withdrawals.
-The trading_mandate is a high-level strategy preference only. The backend-derived effective_symbols
-list is the complete eligible universe and cannot be expanded by the mandate.
+The trading_mandate is high-level strategy context only. The effective_symbols and candidate_symbols
+lists are backend-derived; candidate_history contains the only validated candidate evidence. Choose
+exactly one pair from candidate_symbols and never invent or expand that set. Use only candidate
+history actually supplied when comparing recent price behavior.
 """
 
 SYSTEM_PROMPT = """You are the DARWIN spot trading decision agent.

@@ -45,9 +45,12 @@ available. Both adapters use an approved Binance HTTPS API host.
 scheduler
   -> DecisionCycle
       -> read-only Binance/Codex evidence
-      -> DARWIN AgentRuntime
-      -> deterministic execution policy
       -> effective configured-universe/mandate/live-Spot intersection
+      -> bounded 15m/1h candidate history for every effective symbol
+      -> DARWIN AgentRuntime pair selection
+      -> selected-pair 15m/1h/4h detailed history and account evidence
+      -> DARWIN final BUY/SELL/HOLD decision
+      -> deterministic execution policy
       -> TradeIntent
           HUMAN_APPROVAL -> TradeIntentApproval + Telegram proposal outbox
           AUTO_BOUNDED -> AUTO_POLICY + informational Telegram outbox
@@ -68,16 +71,20 @@ scheduler
 `DecisionCycle` acquires current Binance Spot metadata and computes the
 intersection of persisted `AgentConfig.supported_symbols`, current mandate
 `allowed_symbols`, and currently valid Spot/USDT symbols with required filters.
-It passes only that effective universe to `AgentRuntime`, then acquires the
-selected ticker, exactly 48 closed candles for each of `15m`, `1h`, and `4h`
-from the public Binance Spot `/api/v3/klines` endpoint (`limit=49`, retaining
-only the latest 48 closed rows), balances, open orders,
-recent activity, and filters. The public history adapter is mode-independent;
-AUTO_BOUNDED and HUMAN_APPROVAL receive equivalent typed market evidence. The
-mapper filters the currently forming candle, rejects malformed/non-monotonic
-OHLCV, and rejects history whose newest closed candle is more than two interval
-periods old. It asks the same DARWIN runtime for a typed BUY/SELL/HOLD. HOLD
-records a run only.
+It computes that effective set, validates required Spot filters, and scans
+all remaining symbols with typed candidate history: 10 closed candles for each
+of `15m` and `1h`, using public `/api/v3/klines` requests with `limit=11` and
+bounded concurrency. A candidate failure is audited and excludes only that
+symbol. If no candidate history validates, the cycle returns
+`NO_EFFECTIVE_SYMBOLS` without pair selection. Pair selection receives only the
+remaining validated candidate set and candidate history. After exactly one
+candidate is selected, the existing selected-pair path fetches exactly 48
+closed candles for each of `15m`, `1h`, and `4h` with `limit=49`, plus current
+account evidence. The public history adapter is mode-independent; AUTO_BOUNDED
+and HUMAN_APPROVAL receive equivalent typed market evidence. The mapper filters
+the currently forming candle, rejects malformed/non-monotonic OHLCV, and rejects
+history whose newest closed candle is more than two interval periods old. It asks
+the same DARWIN runtime for a typed BUY/SELL/HOLD. HOLD records a run only.
 BUY/SELL passes through backend checks before it can create an actionable intent:
 
 - exact symbol in the configured trading universe;
@@ -93,15 +100,22 @@ BUY/SELL passes through backend checks before it can create an actionable intent
 - emergency stop off;
 - spot-only execution policy.
 
-The final decision evidence persists the selected pair, current snapshots,
-typed `market_history` for the three intervals, mandate, structured execution
-policy, and budget. Existing evidence serialization and hashing cover the
-historical bars as part of the same decision evidence; the bars inform reasoning
-but do not authorize or override deterministic policy.
+The final decision evidence persists the selected pair, candidate history for
+validated candidates, current snapshots, typed `market_history` for the three
+intervals, mandate, structured execution policy, and budget. Existing evidence
+serialization and hashing cover the historical bars as part of the same decision
+evidence; the bars inform reasoning but do not authorize or override deterministic
+policy.
+
+The scan uses bounded concurrency of eight public requests. The existing
+configured-universe validation permits up to 100 symbols; a very large universe
+may exceed the current 60-second worker cycle timeout and fail closed, but is
+never silently truncated.
 
 A rejected model proposal creates no executable authorization and does not
 resize or mutate the proposal. An out-of-effective-universe model result is
 rejected deterministically and audited.
+
 ### TradeIntentApproval
 
 One `TradeIntentApproval` row belongs to one actionable `TradeIntent`. Telegram
@@ -184,9 +198,11 @@ counted. This prevents self-competition without weakening global reservation
 accounting.
 
 `agent_configs.supported_symbols` is the authoritative persisted configured Spot
-universe. Its bootstrap default is exactly `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, and
-`SOLUSDT`. Owner-only settings can add or remove valid Spot/USDT symbols; this
-does not mutate historical mandates.
+universe. Its bootstrap default is exactly `BTCUSDT`, `ETHUSDT`, `BNBUSDT`,
+`SOLUSDT`, and `XRPUSDT`; this is not a runtime limit or dynamic top-five
+strategy. Owner-only settings can add or remove valid Spot/USDT symbols up to
+the existing 100-symbol validation bound; this does not mutate historical
+mandates.
 
 Migration `0005_confirmation_reference` adds the opaque confirmation reference
 and expiry fields to `trade_intents`.
