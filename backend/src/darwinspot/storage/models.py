@@ -43,7 +43,7 @@ class AgentConfig(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     mode: Mapped[str] = mapped_column(String(32), default="HUMAN_APPROVAL")
     supported_symbols: Mapped[str] = mapped_column(
-        Text, default='["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]'
+        Text, default='["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"]'
     )
     active_mandate_version: Mapped[str | None] = mapped_column(String(36))
     schedule_interval: Mapped[int] = mapped_column(default=300)
@@ -55,6 +55,7 @@ class AgentConfig(Base):
 class MandateVersion(Base):
     __tablename__ = "mandate_versions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    trading_mandate: Mapped[str | None] = mapped_column(Text, nullable=True)
     assets: Mapped[str] = mapped_column(Text)
     entry_rules: Mapped[str] = mapped_column(Text)
     sizing_rules: Mapped[str] = mapped_column(Text)

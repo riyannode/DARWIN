@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
-from decimal import Decimal
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
 from darwinspot.binance.schemas import (
+    CANDIDATE_CANDLE_COUNT,
+    CANDIDATE_HISTORY_REQUEST_LIMIT,
+    CANDIDATE_MARKET_INTERVALS,
+    HISTORY_CANDLE_COUNT,
+    HISTORY_REQUEST_LIMIT,
+    MARKET_HISTORY_MAX_STALENESS_PERIODS,
+    MARKET_INTERVAL_SECONDS,
+    SUPPORTED_MARKET_INTERVALS,
     BalanceSnapshot,
+    CandidateMarketHistorySnapshot,
+    MarketCandle,
+    MarketHistorySnapshot,
     MarketSnapshot,
     OpenOrdersSnapshot,
     OrderSubmission,
@@ -372,6 +383,197 @@ def order_submission_evidence(
         evidence["error_code"] = type(error).__name__
         evidence["error_message"] = message[:512]
     return evidence
+
+
+def _kline_datetime(value: Any, field: str) -> datetime:
+    if isinstance(value, bool):
+        raise BinanceMappingError(f"Binance kline {field} timestamp is invalid")
+    if isinstance(value, int):
+        milliseconds = value
+    elif isinstance(value, str) and value.isdigit():
+        milliseconds = int(value)
+    else:
+        raise BinanceMappingError(f"Binance kline {field} timestamp is invalid")
+    try:
+        return datetime.fromtimestamp(milliseconds / 1000, UTC)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise BinanceMappingError(f"Binance kline {field} timestamp is invalid") from exc
+
+
+def _kline_decimal(value: Any, field: str) -> Decimal:
+    if isinstance(value, bool) or value is None:
+        raise BinanceMappingError(f"Binance kline {field} value is invalid")
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise BinanceMappingError(f"Binance kline {field} value is invalid") from exc
+    if not parsed.is_finite():
+        raise BinanceMappingError(f"Binance kline {field} value is invalid")
+    return parsed
+
+
+def _kline_trade_count(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise BinanceMappingError("Binance kline trade count is invalid")
+    if isinstance(value, int):
+        count = value
+    elif isinstance(value, str) and value.isdigit():
+        count = int(value)
+    else:
+        raise BinanceMappingError("Binance kline trade count is invalid")
+    if count < 0:
+        raise BinanceMappingError("Binance kline trade count is invalid")
+    return count
+
+
+def _map_market_history_payload(
+    payload: Any,
+    *,
+    symbol: str,
+    interval: str,
+    candle_count: int,
+    request_limit: int,
+    now: datetime | None = None,
+    observed_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Map and validate the bounded closed-candle response from Spot /api/v3/klines."""
+    if (
+        not re.fullmatch(r"[A-Z0-9]{5,20}", symbol)
+        or symbol != symbol.upper()
+    ):
+        raise BinanceMappingError("selected market-history symbol is invalid")
+    if interval not in SUPPORTED_MARKET_INTERVALS:
+        raise BinanceMappingError("requested market-history interval is unsupported")
+    interval_key = interval
+    current_time = now or datetime.now(UTC)
+    observed = observed_at or current_time
+    if current_time.tzinfo is None or observed.tzinfo is None:
+        raise BinanceMappingError("market-history timestamps must be timezone-aware")
+    if not isinstance(payload, list) or not payload:
+        raise BinanceMappingError("Binance kline response is outside the bounded array shape")
+
+    raw_klines = cast(list[Any], payload)
+    if len(raw_klines) > request_limit:
+        raise BinanceMappingError("Binance kline response is outside the bounded array shape")
+    closed: list[MarketCandle] = []
+    previous_open_time: datetime | None = None
+    previous_close_time: datetime | None = None
+    unfinished_count = 0
+    for raw_kline in raw_klines:
+        if not isinstance(raw_kline, list):
+            raise BinanceMappingError("Binance kline entry does not match the official array shape")
+        values = cast(list[Any], raw_kline)
+        if len(values) != 12:
+            raise BinanceMappingError("Binance kline entry does not match the official array shape")
+        open_time = _kline_datetime(values[0], "open")
+        close_time = _kline_datetime(values[6], "close")
+        if previous_open_time is not None and open_time <= previous_open_time:
+            raise BinanceMappingError("Binance kline open timestamps are not strictly ordered")
+        if previous_close_time is not None and close_time <= previous_close_time:
+            raise BinanceMappingError("Binance kline close timestamps are not strictly ordered")
+        previous_open_time = open_time
+        previous_close_time = close_time
+        if open_time >= current_time or close_time <= open_time:
+            raise BinanceMappingError("Binance kline timestamps are invalid or in the future")
+        open_value = _kline_decimal(values[1], "open")
+        high = _kline_decimal(values[2], "high")
+        low = _kline_decimal(values[3], "low")
+        close = _kline_decimal(values[4], "close")
+        volume = _kline_decimal(values[5], "volume")
+        quote_volume = _kline_decimal(values[7], "quote volume")
+        trade_count = _kline_trade_count(values[8])
+        if (
+            open_value <= 0
+            or high <= 0
+            or low <= 0
+            or close <= 0
+            or volume < 0
+            or quote_volume < 0
+            or high < open_value
+            or high < close
+            or low > open_value
+            or low > close
+            or high < low
+        ):
+            raise BinanceMappingError("Binance kline OHLCV values failed validation")
+        candle = MarketCandle(
+            open_time=open_time,
+            close_time=close_time,
+            open=open_value,
+            high=high,
+            low=low,
+            close=close,
+            volume=volume,
+            quote_volume=quote_volume,
+            trade_count=trade_count,
+        )
+        if close_time < current_time:
+            closed.append(candle)
+        else:
+            unfinished_count += 1
+
+    if unfinished_count > 1:
+        raise BinanceMappingError("Binance kline response contains multiple unfinished candles")
+    if len(closed) < candle_count:
+        raise BinanceMappingError("Binance kline response contains too few closed candles")
+    closed = closed[-candle_count:]
+    interval_seconds = MARKET_INTERVAL_SECONDS[interval_key]
+    newest_staleness = current_time - closed[-1].close_time
+    max_staleness = timedelta(seconds=interval_seconds * MARKET_HISTORY_MAX_STALENESS_PERIODS)
+    if newest_staleness < timedelta(0) or newest_staleness > max_staleness:
+        raise BinanceMappingError("Binance market history is stale")
+    return {
+        "symbol": symbol,
+        "interval": interval_key,
+        "candles": closed,
+        "observed_at": observed,
+    }
+
+
+def map_market_history(
+    payload: Any,
+    *,
+    symbol: str,
+    interval: str,
+    now: datetime | None = None,
+    observed_at: datetime | None = None,
+) -> MarketHistorySnapshot:
+    return MarketHistorySnapshot.model_validate(
+        _map_market_history_payload(
+            payload,
+            symbol=symbol,
+            interval=interval,
+            candle_count=HISTORY_CANDLE_COUNT,
+            request_limit=HISTORY_REQUEST_LIMIT,
+            now=now,
+            observed_at=observed_at,
+        )
+    )
+
+
+def map_candidate_market_history(
+    payload: Any,
+    *,
+    symbol: str,
+    interval: str,
+    now: datetime | None = None,
+    observed_at: datetime | None = None,
+) -> CandidateMarketHistorySnapshot:
+    if interval not in CANDIDATE_MARKET_INTERVALS:
+        raise BinanceMappingError("candidate market-history interval is unsupported")
+    return CandidateMarketHistorySnapshot.model_validate(
+        _map_market_history_payload(
+            payload,
+            symbol=symbol,
+            interval=interval,
+            candle_count=CANDIDATE_CANDLE_COUNT,
+            request_limit=CANDIDATE_HISTORY_REQUEST_LIMIT,
+            now=now,
+            observed_at=observed_at,
+        )
+    )
 
 
 def map_spot_market_universe(payload: Any) -> list[dict[str, Any]]:

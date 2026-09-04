@@ -15,8 +15,8 @@ Production readiness: PARTIALLY VERIFIED
 
 Verified without Binance login: migrations, deterministic policy, approval and
 outbox state, Codex App Server initialize/status handling, unauthenticated write
-blocking, backend checks, frontend build, and local API/Chromium behavior where
-configured.
+blocking, bounded public Binance `/api/v3/klines` mapping and decision evidence,
+backend checks, frontend build, and local API/Chromium behavior where configured.
 
 ## 1. Install
 
@@ -111,16 +111,15 @@ failure/retry state and performs no fabricated Binance read or write.
 ## 5. Configure DARWIN
 
 1. Sign in as the owner.
-2. Set the four free-text mandate sections.
-3. Set exact allowed symbols, maximum order notional, and maximum open
-   actionable intents.
-4. Set the rolling 24-hour budget.
+2. Set one required high-level Trading Mandate.
+3. Set exact allowed symbols, Max Per Trade, and Max Concurrent Trades.
+4. Set the rolling 24-hour BUY budget.
 5. Configure the persisted Spot universe. It bootstraps to `BTCUSDT`, `ETHUSDT`,
-   `BNBUSDT`, and `SOLUSDT`; adding a symbol here does not authorize it in the
-   mandate.
-6. Start in `HUMAN_APPROVAL` until Codex OAuth and confirmation behavior are
-   manually verified. `AUTO_BOUNDED` uses the same policy/revalidation flow and
-   the direct Spot API, with Telegram informational only.
+   `BNBUSDT`, `SOLUSDT`, and `XRPUSDT`; this is not a runtime limit or top-five
+   strategy. Add/remove valid Spot/USDT symbols as needed; adding a symbol here
+   does not authorize it in the mandate.
+6. Choose `AUTO_BOUNDED` for autonomous execution without per-order approval,
+   or `HUMAN_APPROVAL` for supervised execution through Codex Agent OS.
 7. Confirm the UI shows Codex `AUTH_REQUIRED`/`UNVERIFIED` until manual setup.
 
 ## 6. Telegram webhook
@@ -153,22 +152,34 @@ are idempotent; unauthorized callbacks fail closed.
 
 ```text
 DecisionCycle
-  -> fresh evidence
+  -> lightweight Spot/USDT market universe and effective intersection
+  -> bounded 15m/1h candidate history for every effective symbol
+  -> one selected pair
+  -> selected-pair current ticker + 15m/1h/4h closed OHLCV + account evidence
   -> DARWIN BUY/SELL/HOLD
   -> deterministic policy gate
-  -> WAITING_FOR_APPROVAL + Telegram outbox
-  -> Telegram operator decision
-  -> APPROVED + execution outbox
+  -> HUMAN_APPROVAL: WAITING_FOR_APPROVAL + Telegram outbox
+     AUTO_BOUNDED: AUTO_POLICY authorization + execution outbox
   -> account-scoped PostgreSQL lock
   -> fresh revalidation
-  -> Codex transport/auth state check
-  -> optional observed confirmation/elicitation
-  -> exact MCP write only when verified and explicitly allowed
+  -> HUMAN_APPROVAL: operator authorization + Codex transport
+     AUTO_BOUNDED: direct Binance Spot API
+  -> optional observed confirmation for HUMAN_APPROVAL
+  -> exact write only when the selected path allows it
   -> reconciliation + Telegram receipt
 ```
 
 Reject and expiry are no-write terminal states. Approval never mutates symbol,
 side, quantity, price, or final Binance arguments.
+
+Candidate scanning is count-independent and uses the complete effective set,
+up to the existing configured-universe validation maximum of 100 symbols. Each
+candidate receives 10 closed candles for `15m` and `1h`; no `4h` candidate scan
+or 48-candle candidate fetch is performed. A failed candidate is excluded and
+recorded as sanitized structured logs and original-cycle `pair_selection`
+evidence, not child runs. If all candidates fail, no pair selection
+or financial work occurs. Final detail remains 48 closed candles for each
+`15m`, `1h`, and `4h` interval for only the selected pair.
 
 ## 8. Emergency stop
 

@@ -431,7 +431,7 @@ class ApprovedExecution:
                 or now - freshness > timedelta(seconds=60)
             ):
                 raise ExecutionUnavailable(f"{source_name} revalidation evidence is stale")
-        budget = self.repo.budget_snapshot()
+        budget = self.repo.budget_snapshot(exclude_commitment_intent_id=intent.id)
         if budget is None:
             raise ExecutionUnavailable("current budget and policy are required")
         decision = AgentDecision(

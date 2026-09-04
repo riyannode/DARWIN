@@ -9,6 +9,22 @@ class BudgetExceeded(ValueError):
     pass
 
 
+BUY_BUDGET_RESERVATION_STATES = frozenset(
+    {
+        "WAITING_FOR_APPROVAL",
+        "APPROVED",
+        "AUTO_AUTHORIZED",
+        "REVALIDATING",
+        "WAITING_FOR_EXECUTION_CONFIRMATION",
+        "SUBMITTING",
+        "SUBMISSION_UNKNOWN",
+        "OPEN",
+        "PARTIALLY_FILLED",
+        "CANCEL_PENDING",
+    }
+)
+
+
 @dataclass(frozen=True)
 class BuyFill:
     quote_notional: Decimal

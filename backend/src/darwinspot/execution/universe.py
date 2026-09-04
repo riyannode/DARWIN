@@ -6,7 +6,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, cast
 
-DEFAULT_SUPPORTED_SYMBOLS = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT")
+DEFAULT_SUPPORTED_SYMBOLS = (
+    "BTCUSDT",
+    "ETHUSDT",
+    "BNBUSDT",
+    "SOLUSDT",
+    "XRPUSDT",
+)
 _SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]{1,16}USDT$")
 
 
