@@ -17,4 +17,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        sa.text(
+            "UPDATE mandate_versions "
+            "SET entry_rules = trading_mandate "
+            "WHERE trading_mandate IS NOT NULL "
+            "AND COALESCE(TRIM(assets), '') = '' "
+            "AND COALESCE(TRIM(entry_rules), '') = '' "
+            "AND COALESCE(TRIM(sizing_rules), '') = '' "
+            "AND COALESCE(TRIM(exit_rules), '') = ''"
+        )
+    )
     op.drop_column("mandate_versions", "trading_mandate")

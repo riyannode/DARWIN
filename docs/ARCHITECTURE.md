@@ -163,7 +163,11 @@ remaining notional of every active BUY workflow in
 `WAITING_FOR_EXECUTION_CONFIRMATION`, `SUBMITTING`, `SUBMISSION_UNKNOWN`,
 `OPEN`, `PARTIALLY_FILLED`, or `CANCEL_PENDING`. For a partially filled intent,
 recorded fills are subtracted from its commitment before the remaining amount
-is reserved, preventing double counting.
+is reserved, preventing double counting. During execution revalidation, only
+that current intent's active commitment is excluded from the working budget
+snapshot; its realized BUY fills and every other active commitment remain
+counted. This prevents self-competition without weakening global reservation
+accounting.
 
 `agent_configs.supported_symbols` is the authoritative persisted configured Spot
 universe. Its bootstrap default is exactly `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, and

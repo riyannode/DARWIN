@@ -142,7 +142,9 @@ class Repository:
     def latest_run(self) -> AgentRun | None:
         return self.db.scalar(select(AgentRun).order_by(AgentRun.started_at.desc()).limit(1))
 
-    def budget_snapshot(self) -> BudgetSnapshot | None:
+    def budget_snapshot(
+        self, *, exclude_commitment_intent_id: str | None = None
+    ) -> BudgetSnapshot | None:
         budget = self.current_budget()
         if budget is None:
             return None
@@ -166,6 +168,8 @@ class Repository:
         commitments: list[OpenBuyCommitment] = []
         for intent in intents:
             if intent.local_state not in BUY_BUDGET_RESERVATION_STATES:
+                continue
+            if intent.id == exclude_commitment_intent_id:
                 continue
             reserved = intent.committed_notional or intent.quote_notional or Decimal("0")
             commitments.append(
