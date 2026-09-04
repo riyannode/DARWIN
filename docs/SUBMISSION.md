@@ -48,10 +48,11 @@ withdrawals, and options are outside DARWIN execution scope.
 
 ## Evidence scope
 
-DARWIN currently reasons from current ticker, account, order, and filter
-snapshots. The current runtime does not provide typed historical time-series
-evidence for defensible momentum or trend-continuation claims. Richer market
-reasoning is separate future capability work.
+DARWIN reasons from current ticker, account, order, and filter snapshots plus
+real typed CLOSED Binance Spot OHLCV: 48 candles each for 15m, 1h, and 4h.
+The bounded historical bars inform model reasoning but do not authorize trades
+or guarantee trend prediction. Their newest closed candle must be no more than
+two interval periods old; the currently forming candle is excluded.
 
 ## Verification status
 

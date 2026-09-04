@@ -67,10 +67,10 @@ USDT-only Spot metadata, maximum notional, concurrent workflow limit, rolling
 BUY budget, balances, filters, open-order conflict, freshness, and emergency
 stop.
 
-DARWIN currently reasons from current ticker/account/order evidence. The current
-runtime does not provide typed historical time-series evidence for defensible
-momentum or trend-continuation claims; richer market reasoning is separate
-future capability work.
+DARWIN reasons from current ticker/account/order evidence plus real typed
+CLOSED Binance Spot OHLCV: 48 candles each for 15m, 1h, and 4h. The bounded
+bars inform BUY/SELL/HOLD reasoning, do not authorize trades, exclude the
+currently forming candle, and do not guarantee trend prediction.
 
 ## State and safety
 

@@ -32,10 +32,12 @@ When authentication is absent, transport state is `AUTH_REQUIRED` or
 fabricated, and no write is attempted.
 
 The Spot REST adapter uses only exchange metadata, ticker, account, open orders,
-trade history, order status, order submission, and order cancellation. Its
-credentials are backend-only and must belong to a dedicated Spot-trading-only
-key with withdrawals disabled and IP restrictions where available. Its base URL
-is restricted to approved Binance HTTPS API hosts.
+trade history, order status, order submission, and order cancellation. Public
+historical market evidence is a separate credential-free `GET /api/v3/klines`
+adapter and is shared by both decision modes. The authenticated Spot REST
+adapter's credentials are backend-only and must belong to a dedicated
+Spot-trading-only key with withdrawals disabled and IP restrictions where
+available. Both adapters use an approved Binance HTTPS API host.
 
 ## Runtime
 
@@ -67,8 +69,15 @@ scheduler
 intersection of persisted `AgentConfig.supported_symbols`, current mandate
 `allowed_symbols`, and currently valid Spot/USDT symbols with required filters.
 It passes only that effective universe to `AgentRuntime`, then acquires the
-selected ticker, balances, open orders, recent activity, and filters. It asks
-the same DARWIN runtime for a typed BUY/SELL/HOLD. HOLD records a run only.
+selected ticker, exactly 48 closed candles for each of `15m`, `1h`, and `4h`
+from the public Binance Spot `/api/v3/klines` endpoint (`limit=49`, retaining
+only the latest 48 closed rows), balances, open orders,
+recent activity, and filters. The public history adapter is mode-independent;
+AUTO_BOUNDED and HUMAN_APPROVAL receive equivalent typed market evidence. The
+mapper filters the currently forming candle, rejects malformed/non-monotonic
+OHLCV, and rejects history whose newest closed candle is more than two interval
+periods old. It asks the same DARWIN runtime for a typed BUY/SELL/HOLD. HOLD
+records a run only.
 BUY/SELL passes through backend checks before it can create an actionable intent:
 
 - exact symbol in the configured trading universe;
@@ -84,10 +93,15 @@ BUY/SELL passes through backend checks before it can create an actionable intent
 - emergency stop off;
 - spot-only execution policy.
 
+The final decision evidence persists the selected pair, current snapshots,
+typed `market_history` for the three intervals, mandate, structured execution
+policy, and budget. Existing evidence serialization and hashing cover the
+historical bars as part of the same decision evidence; the bars inform reasoning
+but do not authorize or override deterministic policy.
+
 A rejected model proposal creates no executable authorization and does not
 resize or mutate the proposal. An out-of-effective-universe model result is
 rejected deterministically and audited.
-
 ### TradeIntentApproval
 
 One `TradeIntentApproval` row belongs to one actionable `TradeIntent`. Telegram

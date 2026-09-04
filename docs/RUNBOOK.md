@@ -15,8 +15,8 @@ Production readiness: PARTIALLY VERIFIED
 
 Verified without Binance login: migrations, deterministic policy, approval and
 outbox state, Codex App Server initialize/status handling, unauthenticated write
-blocking, backend checks, frontend build, and local API/Chromium behavior where
-configured.
+blocking, bounded public Binance `/api/v3/klines` mapping and decision evidence,
+backend checks, frontend build, and local API/Chromium behavior where configured.
 
 ## 1. Install
 
@@ -151,7 +151,9 @@ are idempotent; unauthorized callbacks fail closed.
 
 ```text
 DecisionCycle
-  -> fresh evidence
+  -> lightweight Spot/USDT market universe and effective intersection
+  -> one selected pair
+  -> current ticker + 15m/1h/4h closed OHLCV + account evidence
   -> DARWIN BUY/SELL/HOLD
   -> deterministic policy gate
   -> HUMAN_APPROVAL: WAITING_FOR_APPROVAL + Telegram outbox

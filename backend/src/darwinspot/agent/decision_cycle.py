@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -13,6 +14,8 @@ from darwinspot.binance.mapper import (
     map_spot_market_universe,
     map_symbol_filters,
 )
+from darwinspot.binance.market_data import BinanceSpotMarketDataClient
+from darwinspot.binance.schemas import SUPPORTED_MARKET_INTERVALS
 from darwinspot.config import get_settings
 from darwinspot.execution.budget import BudgetExceeded
 from darwinspot.execution.modes import ExecutionMode
@@ -124,6 +127,20 @@ class DecisionCycle:
             await client.call_tool(catalog.arguments("market", {"symbol": pair})),
             observed_at=observed_at,
         )
+        market_data_client = BinanceSpotMarketDataClient(
+            get_settings().binance_spot_api_base_url
+        )
+        history_snapshots = await asyncio.gather(
+            *(
+                market_data_client.market_history(pair, interval)
+                for interval in SUPPORTED_MARKET_INTERVALS
+            )
+        )
+        market_history = {snapshot.interval: snapshot for snapshot in history_snapshots}
+        if set(market_history) != set(SUPPORTED_MARKET_INTERVALS) or any(
+            snapshot.symbol != pair for snapshot in history_snapshots
+        ):
+            raise RuntimeError("market-history evidence does not match the selected pair")
         balances = map_balances(
             await client.call_tool(catalog.arguments("balances", {})), observed_at=observed_at
         )
@@ -168,6 +185,10 @@ class DecisionCycle:
         evidence: dict[str, Any] = {
             "selected_pair": pair,
             "market": market.model_dump(mode="json"),
+            "market_history": {
+                interval: snapshot.model_dump(mode="json")
+                for interval, snapshot in market_history.items()
+            },
             "balances": balances.model_dump(mode="json"),
             "open_orders": open_orders.model_dump(mode="json"),
             "recent_activity": recent_activity.model_dump(mode="json"),

@@ -4,27 +4,31 @@ DARWIN is an autonomous Binance Spot trading agent. Give DARWIN a trading
 mandate and hard risk boundaries. DARWIN decides what, when, and how to trade
 within those limits.
 
-The owner provides one high-level Trading Mandate. DARWIN uses current market
-and account evidence to choose a pair, decide BUY/SELL/HOLD, choose quantity and
-order type, and provide rationale and confidence. The mandate is strategy
-context only; deterministic backend controls remain the authorization source.
+The owner provides one high-level Trading Mandate. DARWIN uses current market,
+recent closed Binance OHLCV, and account evidence to choose a pair, decide BUY/SELL/HOLD,
+choose quantity and order type, and provide rationale and confidence. The mandate is
+strategy context only; deterministic backend controls remain the authorization source.
 
 `AUTO_BOUNDED` is the primary autonomous execution path and does not require
 per-order human approval. `HUMAN_APPROVAL` is the secondary supervised path.
 
 The direct Spot API base URL is restricted to approved Binance HTTPS hosts, and
 its credentials are never exposed to the frontend, DARWIN AgentRuntime, or
-Telegram.
+Telegram. Public historical market data uses the credential-free Binance Spot
+`GET /api/v3/klines` endpoint.
 
-DARWIN currently reasons from current ticker, account, order, and filter
-snapshots. The runtime does not yet provide typed historical time-series
-market evidence for defensible momentum or trend-continuation claims.
+DARWIN reasons from current ticker, account, order, and filter snapshots plus
+real typed CLOSED Binance Spot OHLCV: 48 candles each for 15m, 1h, and 4h.
+Historical bars are bounded evidence for model reasoning, not authorization or a
+guaranteed trend prediction.
 
 ## Runtime flow
 
 ```text
 24/7 scheduler
-  -> market/account evidence
+  -> lightweight Spot/USDT market universe
+  -> effective universe and one selected pair
+  -> selected-pair ticker + 15m/1h/4h closed OHLCV + account evidence
   -> DARWIN decision: BUY / SELL / HOLD
   -> mandate + risk + budget + execution-policy gate
   -> durable TradeIntent
@@ -195,4 +199,6 @@ HOSTNAME=127.0.0.1 PORT=3000 pnpm start
 ```
 
 The local verification harness is ignored under `.local-tests/` and is never
-part of the production source or pull request.
+part of the production source or pull request. It covers the bounded Binance
+kline mapper, closed-candle filtering, freshness, selected-pair ordering, and
+persisted decision evidence.
