@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any
 
-from darwinspot.agent.schemas import AgentDecision
+from darwinspot.agent.schemas import Action, AgentDecision
 from darwinspot.binance.mapper import (
     map_balances,
     map_candidate_market_history,
@@ -46,7 +46,7 @@ class DemoScenarioDefinition:
     title: str
     description: str
     pair: str
-    action: str
+    action: Action
     quantity: Decimal | None
     confidence: Decimal
     rationale: str
@@ -276,7 +276,7 @@ def _selected_history(pair: str) -> dict[str, MarketHistorySnapshot]:
 
 def _decision(definition: DemoScenarioDefinition) -> AgentDecision:
     return AgentDecision(
-        action=cast(Any, definition.action),
+        action=definition.action,
         pair=definition.pair,
         order_type="MARKET" if definition.action != "HOLD" else None,
         side="BUY" if definition.action == "BUY" else None,
