@@ -30,7 +30,7 @@ backend, frontend, and a local SQLite database only.
 The `/demo` experience is prominently labelled:
 
 - **DEMO MODE**
-- Deterministic recorded/synthetic Binance-format evidence
+- Deterministic synthetic Binance-format fixture evidence
 - No LLM API call
 - No live Binance connection
 - Financial writes disabled by a backend guard

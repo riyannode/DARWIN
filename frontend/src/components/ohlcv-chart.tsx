@@ -73,7 +73,7 @@ export function OhlcvChart({ history }: { history: MarketHistory }) {
         </svg>
         <div className="chart-scale"><span>{chart.highest.toLocaleString()}</span><span>{chart.lowest.toLocaleString()}</span></div>
       </div>
-      <p className="panel-note">Recorded closed candles from the backend fixture. No indicators or live order signal are derived here.</p>
+      <p className="panel-note">Synthetic closed candles from the backend fixture. No indicators or live order signal are derived here.</p>
     </div>
   );
 }

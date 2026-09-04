@@ -88,13 +88,12 @@ def _run_system_result(
 
 
 def _run_activity_event(run: AgentRun) -> dict[str, object]:
-    decision = _run_decision(run)
-    system_outcome, reason = _run_system_result(run, decision)
+    is_decision = run.trigger_type in {"SCHEDULED", "RUN_ONCE"}
+    decision = _run_decision(run) if is_decision else {}
+    system_outcome, reason = _run_system_result(run, decision) if is_decision else (None, None)
     return {
         "id": run.id,
-        "type": "audit"
-        if run.trigger_type in {"BUDGET_INCREASED", "EMERGENCY_STOP_CLEARED"}
-        else "decision",
+        "type": "decision" if is_decision else "audit",
         "state": run.result_state,
         "timestamp": run.started_at,
         "trigger": run.trigger_type,

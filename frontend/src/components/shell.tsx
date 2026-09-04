@@ -37,10 +37,10 @@ export function Shell({ children }: { children: ReactNode }) {
       <p className="eyebrow">AUTONOMOUS SPOT OPERATOR</p>
       <nav aria-label="Primary navigation">{nav.map(([href, label]) => <Link key={href} href={href} className={pathname === href ? "nav-link active" : "nav-link"}>{label}</Link>)}</nav>
       {isDemo ? <div className="sidebar-login demo-sidebar-login"><strong>Zero credentials</strong><span className="muted">This walkthrough never connects to Binance or an LLM.</span></div> : <form action={login} className="sidebar-login"><label>Owner session<input name="password" type="password" required aria-label="Owner password" /></label><button className="button secondary" type="submit">Sign in</button>{authStatus && <p className="form-status" role="status">{authStatus}</p>}</form>}
-      <div className="sidebar-note"><span className="signal-dot" /> {isDemo ? "Recorded judge walkthrough" : "Owner-operated"}<br />{isDemo ? "No financial writes" : "Binance Agent OS"}</div>
+      <div className="sidebar-note"><span className="signal-dot" /> {isDemo ? "Synthetic judge walkthrough" : "Owner-operated"}<br />{isDemo ? "No financial writes" : "Binance Agent OS"}</div>
     </aside>
     <main className="main-content">
-      <header className="topbar"><div><p className="eyebrow">{isDemo ? "DEMO MODE / RECORDED EVIDENCE" : `CONTROL ROOM / ${pathname === "/" ? "OVERVIEW" : pathname.slice(1).toUpperCase()}`}</p><p className="muted">{isDemo ? "Deterministic walkthrough. Financial writes disabled." : "Your agent can act. Your budget stays deterministic."}</p></div><Link href={isDemo ? "/demo" : "/settings"} className="connection-chip"><span className="status-dot" /> {isDemo ? "DEMO MODE" : "Connection"}</Link></header>
+      <header className="topbar"><div><p className="eyebrow">{isDemo ? "DEMO MODE / SYNTHETIC FIXTURE" : `CONTROL ROOM / ${pathname === "/" ? "OVERVIEW" : pathname.slice(1).toUpperCase()}`}</p><p className="muted">{isDemo ? "Deterministic synthetic evidence. Financial writes disabled." : "Your agent can act. Your budget stays deterministic."}</p></div><Link href={isDemo ? "/demo" : "/settings"} className="connection-chip"><span className="status-dot" /> {isDemo ? "DEMO MODE" : "Connection"}</Link></header>
       {children}
       {!isDemo && emergencyStop !== null && <div className="global-stop"><EmergencyStop active={emergencyStop} onChanged={setEmergencyStop} /></div>}
     </main>

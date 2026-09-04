@@ -78,6 +78,8 @@ async def resolve_pending_confirmation(intent_id: str, action: ElicitationAction
     if pending is None:
         return False
     transport, request_id = pending
+    if action == "accept":
+        ensure_financial_write_allowed()
     try:
         await transport.resolve_elicitation(request_id, action)
     except CodexTransportError:

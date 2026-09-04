@@ -133,7 +133,8 @@ export const demoScenarioSchema = z.object({
   timestamp: z.string(),
   disclosure: z.object({
     deterministic: z.boolean(),
-    recordedEvidence: z.boolean(),
+    syntheticEvidence: z.boolean(),
+    fixtureFormat: z.string(),
     llmCall: z.boolean(),
     liveBinance: z.boolean(),
     financialWrites: z.boolean(),

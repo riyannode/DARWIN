@@ -73,7 +73,7 @@ SCENARIOS: tuple[DemoScenarioDefinition, ...] = (
             "available USDT balance covers the computed notional",
         ),
         risk_factors=(
-            "recorded evidence is not live market data",
+            "synthetic fixture evidence is not live market data",
             "demo financial submission is disabled",
         ),
     ),
@@ -86,12 +86,12 @@ SCENARIOS: tuple[DemoScenarioDefinition, ...] = (
         quantity=Decimal("1"),
         confidence=Decimal("0.91"),
         rationale=(
-            "SOL has a strong recorded setup, but the requested notional is outside the "
+            "SOL has a strong synthetic-fixture setup, but the requested notional is outside the "
             "mandate's hard per-trade limit."
         ),
         supporting_factors=(
             "SOLUSDT is in the effective universe",
-            "recorded 15m and 1h candles show a strong setup",
+            "synthetic 15m and 1h candles show a strong setup",
         ),
         risk_factors=(
             "requested notional is 150 USDT",
@@ -107,7 +107,7 @@ SCENARIOS: tuple[DemoScenarioDefinition, ...] = (
         quantity=None,
         confidence=Decimal("0.67"),
         rationale=(
-            "ETH evidence is mixed across the recorded windows, so the mandate's "
+            "ETH synthetic fixture evidence is mixed across the windows, so the mandate's "
             "capital-protection preference selects HOLD."
         ),
         supporting_factors=(
@@ -241,14 +241,24 @@ def _filters(pair: str) -> SymbolFilters:
     )
 
 
+def _fixture_drift(pair: str, interval: str) -> Decimal:
+    price = _price(pair)
+    if pair == "ETHUSDT":
+        return {
+            "15m": price * Decimal("0.0004"),
+            "1h": price * Decimal("-0.0003"),
+            "4h": price * Decimal("0.00005"),
+        }[interval]
+    return price * Decimal("0.001")
+
+
 def _candidate_history() -> dict[str, dict[str, object]]:
     histories: dict[str, dict[str, object]] = {}
     for symbol in DEMO_ALLOWED_SYMBOLS:
         base = _price(symbol) * Decimal("0.98")
-        drift = max(_price(symbol) * Decimal("0.001"), Decimal("0.0001"))
         histories[symbol] = {
             interval: map_candidate_market_history(
-                _raw_klines(interval, 10, base, drift),
+                _raw_klines(interval, 10, base, _fixture_drift(symbol, interval)),
                 symbol=symbol,
                 interval=interval,
                 now=DEMO_NOW,
@@ -261,10 +271,9 @@ def _candidate_history() -> dict[str, dict[str, object]]:
 
 def _selected_history(pair: str) -> dict[str, MarketHistorySnapshot]:
     base = _price(pair) * Decimal("0.98")
-    drift = max(_price(pair) * Decimal("0.001"), Decimal("0.0001"))
     return {
         interval: map_market_history(
-            _raw_klines(interval, 48, base, drift),
+            _raw_klines(interval, 48, base, _fixture_drift(pair, interval)),
             symbol=pair,
             interval=interval,
             now=DEMO_NOW,
@@ -272,6 +281,25 @@ def _selected_history(pair: str) -> dict[str, MarketHistorySnapshot]:
         )
         for interval in SUPPORTED_MARKET_INTERVALS
     }
+
+
+def _assert_fixture_direction(
+    scenario_id: str, history: dict[str, MarketHistorySnapshot]
+) -> None:
+    if scenario_id == "valid-buy":
+        assert all(
+            candle.close > candle.open
+            for snapshot in history.values()
+            for candle in snapshot.candles
+        )
+    if scenario_id == "hold":
+        assert history["15m"].candles[-1].close > history["15m"].candles[0].open
+        assert history["1h"].candles[-1].close < history["1h"].candles[0].open
+        assert not all(
+            candle.close >= candle.open
+            for snapshot in history.values()
+            for candle in snapshot.candles
+        )
 
 
 def _decision(definition: DemoScenarioDefinition) -> AgentDecision:
@@ -282,7 +310,7 @@ def _decision(definition: DemoScenarioDefinition) -> AgentDecision:
         side="BUY" if definition.action == "BUY" else None,
         quantity=definition.quantity,
         rationale=definition.rationale,
-        evidence=["recorded_candidate_history", "recorded_selected_pair_evidence"],
+        evidence=["synthetic_candidate_history", "synthetic_selected_pair_evidence"],
         confidence=definition.confidence,
         supporting_factors=list(definition.supporting_factors),
         risk_factors=list(definition.risk_factors),
@@ -376,6 +404,7 @@ def build_demo_result(scenario_id: str) -> dict[str, Any]:
     open_orders = _open_orders()
     filters = _filters(definition.pair)
     selected_history = _selected_history(definition.pair)
+    _assert_fixture_direction(definition.scenario_id, selected_history)
     candidate_history = _candidate_history()
     evaluation: PolicyEvaluation | None = None
     system_reason = "NO_TRADE"
@@ -418,7 +447,7 @@ def build_demo_result(scenario_id: str) -> dict[str, Any]:
             reason_code = _reason_code(evaluation.reason) or "POLICY_REJECTED"
             lifecycle = ["MODEL_DECISION_RECORDED", "POLICY_REJECTED"]
     final_evidence = {
-        "recorded": True,
+        "fixtureEvidence": "SYNTHETIC_BINANCE_FORMAT",
         "observed_at": DEMO_NOW,
         "selected_pair": definition.pair,
         "market": market.model_dump(mode="json"),
@@ -439,7 +468,8 @@ def build_demo_result(scenario_id: str) -> dict[str, Any]:
         "timestamp": DEMO_NOW,
         "disclosure": {
             "deterministic": True,
-            "recordedEvidence": True,
+            "syntheticEvidence": True,
+            "fixtureFormat": "BINANCE_FORMAT",
             "llmCall": False,
             "liveBinance": False,
             "financialWrites": False,

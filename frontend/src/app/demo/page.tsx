@@ -57,8 +57,8 @@ export default function DemoPage() {
   return (
     <div className="page demo-page">
       <section className="demo-disclosure" role="alert">
-        <div><span className="demo-label">DEMO MODE</span><strong>Deterministic recorded scenario</strong></div>
-        <p>No LLM API call · No live Binance connection · Financial writes disabled</p>
+        <div><span className="demo-label">DEMO MODE</span><strong>Deterministic synthetic fixture</strong></div>
+        <p>Synthetic Binance-format evidence · No LLM API call · No live Binance connection · Financial writes disabled</p>
       </section>
       <div className="page-heading demo-heading">
         <div>
@@ -66,7 +66,7 @@ export default function DemoPage() {
           <h1>See the boundary hold.</h1>
           <p className="hero-copy">DARWIN receives one mandate, scans a configured universe, decides BUY/SELL/HOLD, and applies the same deterministic guardrails before any execution path.</p>
         </div>
-        <div className="demo-stamp"><span>ZERO CREDENTIALS</span><strong>Recorded, not live</strong></div>
+        <div className="demo-stamp"><span>ZERO CREDENTIALS</span><strong>Synthetic, not live</strong></div>
       </div>
       {status && <div className="notice warning" role="status">{status}</div>}
       {scenario && (
