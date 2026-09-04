@@ -8,10 +8,7 @@ export const agentSchema = z.object({
   nextRunAt: z.string().nullable().optional(),
   mandate: z.object({
     version: z.string(),
-    assets: z.string(),
-    entryRules: z.string(),
-    sizingRules: z.string(),
-    exitRules: z.string(),
+    tradingMandate: z.string(),
     allowedSymbols: z.array(z.string()),
     maxOrderNotional: z.string(),
     maxOpenActionableIntents: z.number(),

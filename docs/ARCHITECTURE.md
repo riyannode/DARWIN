@@ -145,12 +145,25 @@ boundary; reconciliation wins over retry. The marker never proves success.
 
 ## Durable state
 
-`mandate_versions` remains immutable and now stores:
+`mandate_versions` remains immutable. New rows store the canonical free-text
+`trading_mandate` plus the structured policy fields. Historical rows preserve
+`assets`, `entry_rules`, `sizing_rules`, and `exit_rules`; when a legacy row has
+no `trading_mandate`, the repository derives a read-only compatibility text
+without rewriting the row.
 
-- existing free-text `assets`, `entry_rules`, `sizing_rules`, `exit_rules`;
+The structured policy fields remain:
+
 - `allowed_symbols` JSON text;
 - `max_order_notional` numeric;
 - `max_open_actionable_intents` integer.
+
+`BudgetSnapshot` counts BUY fills observed in the prior 24 hours plus the
+remaining notional of every active BUY workflow in
+`WAITING_FOR_APPROVAL`, `APPROVED`, `AUTO_AUTHORIZED`, `REVALIDATING`,
+`WAITING_FOR_EXECUTION_CONFIRMATION`, `SUBMITTING`, `SUBMISSION_UNKNOWN`,
+`OPEN`, `PARTIALLY_FILLED`, or `CANCEL_PENDING`. For a partially filled intent,
+recorded fills are subtracted from its commitment before the remaining amount
+is reserved, preventing double counting.
 
 `agent_configs.supported_symbols` is the authoritative persisted configured Spot
 universe. Its bootstrap default is exactly `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, and
@@ -195,9 +208,11 @@ retry timestamps, and bounded errors. Financial execution state is always read
 from the intent/approval tables, not inferred from outbox status.
 
 Proposal admission locks the agent/account scope while resolving the current
-policy, counting actionable intents, and creating intent plus the mode-specific
-authorization and outbox rows. Thus `max_open_actionable_intents=1` cannot be exceeded by two
-DecisionCycle replicas.
+policy, reloading the rolling budget, counting actionable intents, and creating
+intent plus the mode-specific authorization and outbox rows. The current
+BUY reservation is checked under that lock before commit, so
+`max_open_actionable_intents` and the rolling BUY budget cannot be bypassed by
+concurrent admissions.
 
 The same protected admission operation enforces `SIGNAL_COOLDOWN_SECONDS` for
 the exact pair/direction, preventing repeated materially-identical Telegram

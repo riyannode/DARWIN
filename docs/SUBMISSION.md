@@ -1,38 +1,57 @@
-# DarwinSpot submission copy
+# DARWIN submission copy
 
 ## One-line description
 
-DARWIN is a 24/7 autonomous Binance Agent OS decision and risk runtime with
-HUMAN_APPROVAL and AUTO_BOUNDED execution modes sharing one agent and policy
-pipeline.
+DARWIN is a 24/7 autonomous Binance Spot trading agent. The owner provides a
+high-level Trading Mandate and hard risk boundaries; DARWIN decides what, when,
+and how to trade within those limits.
 
 ## Short description
 
-DARWIN continuously monitors market and account evidence, asks its own
-`AgentRuntime` for typed BUY/SELL/HOLD decisions, applies deterministic mandate,
+DARWIN continuously monitors current market and account evidence, asks its own
+`AgentRuntime` for typed BUY/SELL/HOLD decisions, applies deterministic symbol,
 risk, budget, exposure, and exchange-filter checks, and creates durable
-`TradeIntent` proposals. Telegram is the primary operator approval surface;
-the existing web UI is a fallback. Approve always triggers fresh revalidation
-before any exact Binance write.
+`TradeIntent` records. `AUTO_BOUNDED` is the primary autonomous execution path
+and does not require per-order human approval. `HUMAN_APPROVAL` is the secondary
+supervised alternative.
 
-DARWIN owns the autonomous strategy, policy, budget, intent lifecycle,
+DARWIN owns the autonomous strategy context, policy, budget, intent lifecycle,
 approval, idempotency, execution gating, reconciliation, emergency stop, and
 audit evidence. Codex is only the supported Binance OAuth identity and MCP
-transport. DARWIN sends no natural-language trading prompt to Codex, and Codex
-never chooses trades.
+transport for HUMAN_APPROVAL. DARWIN sends no natural-language trading prompt to
+Codex, and Codex never chooses trades.
+
+## Configuration and authority
+
+The owner configures one Trading Mandate, exact allowed symbols, Max Per Trade,
+Max Concurrent Trades, a rolling 24-hour BUY budget, and an execution mode.
+Configured Spot Universe and Emergency Stop remain separate backend controls.
+The Trading Mandate is strategy context only and is never authorization.
+
+BUY acquires a Spot asset. SELL sells a Spot asset already held by the account;
+SELL does not open a short position. Futures, margin, leverage, transfers,
+withdrawals, and options are outside DARWIN execution scope.
 
 ## Safety claims
 
+- `AUTO_BOUNDED` uses `AUTO_POLICY` authorization and does not bypass
+  deterministic policy, account locking, or fresh revalidation.
 - `HUMAN_APPROVAL` requires explicit operator approval before ordinary writes.
-- `AUTO_BOUNDED` is bounded autonomous Spot execution through the direct API;
-  it does not bypass deterministic policy or fresh revalidation.
+- Allowed symbols, configured universe, per-trade notional, concurrent workflow
+  count, rolling BUY budget, balances, filters, freshness, open-order conflict,
+  and emergency stop remain backend-authoritative.
 - Telegram callbacks contain only opaque `approval_id` references.
 - Rejected, expired, stale, policy-failed, or unauthenticated paths perform no
   financial write.
 - Binance/Codex confirmation is never auto-answered.
-- Emergency-stop cancellation is an explicit operator-command path and remains
-  reconciliation-backed.
 - Transfers and withdrawals are unsupported and fail closed.
+
+## Evidence scope
+
+DARWIN currently reasons from current ticker, account, order, and filter
+snapshots. The current runtime does not provide typed historical time-series
+evidence for defensible momentum or trend-continuation claims. Richer market
+reasoning is separate future capability work.
 
 ## Verification status
 
@@ -58,13 +77,12 @@ Bot API verification. No funded trade is required for the initial acceptance.
 
 1. Start DARWIN safely before Binance authentication.
 2. Show `AUTH_REQUIRED`/`UNVERIFIED` Codex state.
-3. Configure the four-part mandate, structured policy, budget, and mode.
+3. Configure one Trading Mandate, hard guardrails, budget, and mode.
 4. Show the 24/7 monitoring/decision architecture.
-5. Show a bounded Telegram proposal with rationale and risk/budget status.
-6. Reject or allow expiry and show zero write.
-7. Approve a proposal, show fresh revalidation, and reach the real confirmation
-   boundary after manual transport verification.
-8. Decline the first confirmation and show zero trade.
+5. In `AUTO_BOUNDED`, show an autonomous signal and bounded execution path
+   without per-order approval.
+6. In `HUMAN_APPROVAL`, show a supervised proposal and fresh revalidation.
+7. Decline the first transport confirmation and show zero trade.
 
 ## Replication
 

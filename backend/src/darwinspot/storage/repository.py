@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from darwinspot.domain import AgentState, new_idempotency_key, now_utc
 from darwinspot.execution.budget import (
+    BUY_BUDGET_RESERVATION_STATES,
     BudgetExceeded,
     BudgetSnapshot,
     BuyFill,
@@ -94,6 +95,17 @@ class Repository:
     def current_mandate(self) -> MandateVersion | None:
         return self.db.scalar(select(MandateVersion).order_by(MandateVersion.created_at.desc()))
 
+    @staticmethod
+    def mandate_text(mandate: MandateVersion) -> str:
+        if mandate.trading_mandate is not None:
+            return mandate.trading_mandate
+        return (
+            f"Assets and universe:\n{mandate.assets}\n\n"
+            f"Entry preferences:\n{mandate.entry_rules}\n\n"
+            f"Sizing preferences:\n{mandate.sizing_rules}\n\n"
+            f"Exit preferences:\n{mandate.exit_rules}"
+        )
+
     def current_policy(self) -> ExecutionPolicy | None:
         mandate = self.current_mandate()
         if mandate is None:
@@ -153,16 +165,7 @@ class Repository:
                 fills.append(BuyFill(event.filled_notional, event.observed_at))
         commitments: list[OpenBuyCommitment] = []
         for intent in intents:
-            if intent.local_state not in {
-                "AUTO_AUTHORIZED",
-                "OPEN",
-                "PARTIALLY_FILLED",
-                "SUBMITTING",
-                "SUBMISSION_UNKNOWN",
-                "CANCEL_PENDING",
-                "REVALIDATING",
-                "WAITING_FOR_EXECUTION_CONFIRMATION",
-            }:
+            if intent.local_state not in BUY_BUDGET_RESERVATION_STATES:
                 continue
             reserved = intent.committed_notional or intent.quote_notional or Decimal("0")
             commitments.append(
@@ -413,6 +416,11 @@ class Repository:
 
     def save_mandate(self, fields: dict[str, Any]) -> MandateVersion:
         version_id = new_idempotency_key()
+        trading_mandate = fields.get("trading_mandate")
+        if not isinstance(trading_mandate, str) or not trading_mandate.strip():
+            raise ValueError("trading_mandate must be a non-empty string")
+        if len(trading_mandate) > 4000:
+            raise ValueError("trading_mandate must not exceed 4000 characters")
         allowed_symbols = fields["allowed_symbols"]
         if not isinstance(allowed_symbols, list):
             raise ValueError("allowed_symbols must be a list")
@@ -426,10 +434,11 @@ class Repository:
             )
         version = MandateVersion(
             id=version_id,
-            assets=fields["assets"],
-            entry_rules=fields["entry_rules"],
-            sizing_rules=fields["sizing_rules"],
-            exit_rules=fields["exit_rules"],
+            trading_mandate=trading_mandate,
+            assets="",
+            entry_rules="",
+            sizing_rules="",
+            exit_rules="",
             allowed_symbols=json.dumps(allowed_symbols, sort_keys=True),
             max_order_notional=fields["max_order_notional"],
             max_open_actionable_intents=fields["max_open_actionable_intents"],
@@ -635,6 +644,25 @@ class Repository:
             is not None
         )
 
+    def _check_actionable_admission(
+        self,
+        policy: ExecutionPolicy,
+        *,
+        side: str,
+        committed_notional: Decimal | None,
+    ) -> None:
+        if self.actionable_intent_count() >= policy.max_open_actionable_intents:
+            raise BudgetExceeded("max_open_actionable_intents reached")
+        if side != "BUY":
+            return
+        if committed_notional is None or not committed_notional.is_finite():
+            raise ValueError("backend-computed buy notional is required")
+        snapshot = self.budget_snapshot()
+        if snapshot is None:
+            raise ValueError("daily budget is required before a buy")
+        if not snapshot.can_buy(committed_notional):
+            raise BudgetExceeded("buy exceeds Available Budget")
+
     def create_waiting_intent(
         self,
         *,
@@ -651,17 +679,20 @@ class Repository:
         policy = self.current_policy()
         if config is None or policy is None:
             raise ValueError("agent policy is required before creating an intent")
-        if self.actionable_intent_count() >= policy.max_open_actionable_intents:
-            raise BudgetExceeded("max_open_actionable_intents reached")
-        if signal_since is not None and self.recent_actionable_signal_exists(
-            pair=str(decision["pair"]),
-            side=str(decision.get("side") or decision["action"]),
-            since=signal_since,
-        ):
-            raise BudgetExceeded("signal cooldown is active for this pair and side")
         quantity = Decimal(str(decision["quantity"]))
         price = Decimal(str(decision["price"])) if decision.get("price") is not None else None
         side = str(decision.get("side") or decision["action"])
+        if signal_since is not None and self.recent_actionable_signal_exists(
+            pair=str(decision["pair"]),
+            side=side,
+            since=signal_since,
+        ):
+            raise BudgetExceeded("signal cooldown is active for this pair and side")
+        self._check_actionable_admission(
+            policy,
+            side=side,
+            committed_notional=evaluation.computed_notional if side == "BUY" else None,
+        )
         now = now_utc()
         intent = TradeIntent(
             id=new_idempotency_key(),
@@ -724,17 +755,20 @@ class Repository:
             raise ValueError("agent policy is required before creating an intent")
         if config.mode != ExecutionMode.AUTO_BOUNDED:
             raise ValueError("auto intent requires AUTO_BOUNDED mode")
-        if self.actionable_intent_count() >= policy.max_open_actionable_intents:
-            raise BudgetExceeded("max_open_actionable_intents reached")
-        if signal_since is not None and self.recent_actionable_signal_exists(
-            pair=str(decision["pair"]),
-            side=str(decision.get("side") or decision["action"]),
-            since=signal_since,
-        ):
-            raise BudgetExceeded("signal cooldown is active for this pair and side")
         quantity = Decimal(str(decision["quantity"]))
         price = Decimal(str(decision["price"])) if decision.get("price") is not None else None
         side = str(decision.get("side") or decision["action"])
+        if signal_since is not None and self.recent_actionable_signal_exists(
+            pair=str(decision["pair"]),
+            side=side,
+            since=signal_since,
+        ):
+            raise BudgetExceeded("signal cooldown is active for this pair and side")
+        self._check_actionable_admission(
+            policy,
+            side=side,
+            committed_notional=evaluation.computed_notional if side == "BUY" else None,
+        )
         now = now_utc()
         intent = TradeIntent(
             id=new_idempotency_key(),

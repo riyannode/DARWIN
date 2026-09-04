@@ -1,13 +1,12 @@
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class MandateInput(BaseModel):
-    assets: str = Field(min_length=1, max_length=2000)
-    entry_rules: str = Field(min_length=1, max_length=4000)
-    sizing_rules: str = Field(min_length=1, max_length=2000)
-    exit_rules: str = Field(min_length=1, max_length=4000)
+    model_config = ConfigDict(extra="forbid")
+
+    trading_mandate: str = Field(min_length=1, max_length=4000)
     allowed_symbols: list[str] = Field(min_length=1, max_length=100)
     max_order_notional: Decimal = Field(gt=Decimal("0"), max_digits=30, decimal_places=12)
     max_open_actionable_intents: int = Field(gt=0, le=100)

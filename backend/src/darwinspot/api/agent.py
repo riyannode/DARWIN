@@ -81,10 +81,7 @@ def _agent_payload(repo: Repository) -> dict[str, object]:
         if mandate is None
         else {
             "version": mandate.id,
-            "assets": mandate.assets,
-            "entryRules": mandate.entry_rules,
-            "sizingRules": mandate.sizing_rules,
-            "exitRules": mandate.exit_rules,
+            "tradingMandate": repo.mandate_text(mandate),
             "allowedSymbols": json.loads(mandate.allowed_symbols),
             "maxOrderNotional": str(mandate.max_order_notional),
             "maxOpenActionableIntents": mandate.max_open_actionable_intents,
@@ -178,7 +175,7 @@ def put_mode(
     config = repo.get_or_create_agent()
     if request.mode == ExecutionMode.AUTO_BOUNDED and repo.current_mandate() is None:
         raise HTTPException(
-            status_code=409, detail="complete all four mandate sections before activation"
+            status_code=409, detail="configure a Trading Mandate before activation"
         )
     if request.mode == ExecutionMode.AUTO_BOUNDED and repo.current_budget() is None:
         raise HTTPException(

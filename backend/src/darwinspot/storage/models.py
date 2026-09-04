@@ -55,6 +55,7 @@ class AgentConfig(Base):
 class MandateVersion(Base):
     __tablename__ = "mandate_versions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    trading_mandate: Mapped[str | None] = mapped_column(Text, nullable=True)
     assets: Mapped[str] = mapped_column(Text)
     entry_rules: Mapped[str] = mapped_column(Text)
     sizing_rules: Mapped[str] = mapped_column(Text)

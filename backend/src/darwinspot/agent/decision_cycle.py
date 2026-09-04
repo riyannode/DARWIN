@@ -91,12 +91,7 @@ class DecisionCycle:
             {
                 "market_universe": eligible_market,
                 "effective_symbols": sorted(eligible_symbols),
-                "mandate": {
-                    "assets": mandate.assets,
-                    "entry_rules": mandate.entry_rules,
-                    "sizing_rules": mandate.sizing_rules,
-                    "exit_rules": mandate.exit_rules,
-                },
+                "mandate": {"trading_mandate": repo.mandate_text(mandate)},
                 "execution_policy": {
                     "allowed_symbols": sorted(policy.allowed_symbols),
                     "max_order_notional": str(policy.max_order_notional),
@@ -177,12 +172,7 @@ class DecisionCycle:
             "open_orders": open_orders.model_dump(mode="json"),
             "recent_activity": recent_activity.model_dump(mode="json"),
             "symbol_filters": filters.model_dump(mode="json"),
-            "mandate": {
-                "assets": mandate.assets,
-                "entry_rules": mandate.entry_rules,
-                "sizing_rules": mandate.sizing_rules,
-                "exit_rules": mandate.exit_rules,
-            },
+            "mandate": {"trading_mandate": repo.mandate_text(mandate)},
             "execution_policy": {
                 "allowed_symbols": sorted(policy.allowed_symbols),
                 "max_order_notional": str(policy.max_order_notional),

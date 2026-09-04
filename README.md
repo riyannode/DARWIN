@@ -1,18 +1,24 @@
 # DARWIN
 
-DARWIN is an autonomous Binance Spot market-monitoring and decision runtime with
-two explicit execution modes. It continuously collects live evidence, asks the
-DARWIN `AgentRuntime` for a typed BUY/SELL/HOLD decision, applies deterministic
-policy and budget checks, creates durable `TradeIntent` records, and signals the
-operator through Telegram.
+DARWIN is an autonomous Binance Spot trading agent. Give DARWIN a trading
+mandate and hard risk boundaries. DARWIN decides what, when, and how to trade
+within those limits.
 
-DARWIN remains the only decision-making agent. HUMAN_APPROVAL requires operator
-approval; AUTO_BOUNDED can execute through the narrow Binance Spot API only
-after the same policy, lock, and fresh revalidation checks.
+The owner provides one high-level Trading Mandate. DARWIN uses current market
+and account evidence to choose a pair, decide BUY/SELL/HOLD, choose quantity and
+order type, and provide rationale and confidence. The mandate is strategy
+context only; deterministic backend controls remain the authorization source.
+
+`AUTO_BOUNDED` is the primary autonomous execution path and does not require
+per-order human approval. `HUMAN_APPROVAL` is the secondary supervised path.
 
 The direct Spot API base URL is restricted to approved Binance HTTPS hosts, and
 its credentials are never exposed to the frontend, DARWIN AgentRuntime, or
 Telegram.
+
+DARWIN currently reasons from current ticker, account, order, and filter
+snapshots. The runtime does not yet provide typed historical time-series
+market evidence for defensible momentum or trend-continuation claims.
 
 ## Runtime flow
 
@@ -44,7 +50,7 @@ DARWIN owns:
 - market/account evidence acquisition;
 - LLM/model invocation and strategy context;
 - BUY/SELL/HOLD decisions;
-- structured execution policy, budget, risk, and sizing checks;
+- structured execution policy, budget, risk, and order-size checks;
 - durable TradeIntent and approval state;
 - idempotency, write gating, and reconciliation;
 - emergency stop and audit trail;

@@ -111,16 +111,14 @@ failure/retry state and performs no fabricated Binance read or write.
 ## 5. Configure DARWIN
 
 1. Sign in as the owner.
-2. Set the four free-text mandate sections.
-3. Set exact allowed symbols, maximum order notional, and maximum open
-   actionable intents.
-4. Set the rolling 24-hour budget.
+2. Set one required high-level Trading Mandate.
+3. Set exact allowed symbols, Max Per Trade, and Max Concurrent Trades.
+4. Set the rolling 24-hour BUY budget.
 5. Configure the persisted Spot universe. It bootstraps to `BTCUSDT`, `ETHUSDT`,
    `BNBUSDT`, and `SOLUSDT`; adding a symbol here does not authorize it in the
    mandate.
-6. Start in `HUMAN_APPROVAL` until Codex OAuth and confirmation behavior are
-   manually verified. `AUTO_BOUNDED` uses the same policy/revalidation flow and
-   the direct Spot API, with Telegram informational only.
+6. Choose `AUTO_BOUNDED` for autonomous execution without per-order approval,
+   or `HUMAN_APPROVAL` for supervised execution through Codex Agent OS.
 7. Confirm the UI shows Codex `AUTH_REQUIRED`/`UNVERIFIED` until manual setup.
 
 ## 6. Telegram webhook
@@ -156,14 +154,14 @@ DecisionCycle
   -> fresh evidence
   -> DARWIN BUY/SELL/HOLD
   -> deterministic policy gate
-  -> WAITING_FOR_APPROVAL + Telegram outbox
-  -> Telegram operator decision
-  -> APPROVED + execution outbox
+  -> HUMAN_APPROVAL: WAITING_FOR_APPROVAL + Telegram outbox
+     AUTO_BOUNDED: AUTO_POLICY authorization + execution outbox
   -> account-scoped PostgreSQL lock
   -> fresh revalidation
-  -> Codex transport/auth state check
-  -> optional observed confirmation/elicitation
-  -> exact MCP write only when verified and explicitly allowed
+  -> HUMAN_APPROVAL: operator authorization + Codex transport
+     AUTO_BOUNDED: direct Binance Spot API
+  -> optional observed confirmation for HUMAN_APPROVAL
+  -> exact write only when the selected path allows it
   -> reconciliation + Telegram receipt
 ```
 
