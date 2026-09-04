@@ -207,6 +207,7 @@ class Repository:
                             "CANCELED",
                             "EXPIRED",
                             "REJECTED_EXCHANGE",
+                            "FINANCIAL_WRITES_DISABLED",
                         ]
                     )
                 )

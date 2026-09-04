@@ -17,7 +17,10 @@ from darwinspot.binance.mapper import (
     order_submission_evidence,
     validate_order_submission_correlation,
 )
-from darwinspot.execution.demo_guard import ensure_financial_write_allowed
+from darwinspot.execution.demo_guard import (
+    FinancialWriteBlocked,
+    ensure_financial_write_allowed,
+)
 from darwinspot.execution.orders import SubmissionBlocked
 from darwinspot.observability import log_event
 from darwinspot.storage.models import TradeIntent
@@ -61,6 +64,8 @@ async def submit_intent(
             expected_client_order_id=intent.idempotency_key,
             expected_side=intent.side,
         )
+    except FinancialWriteBlocked:
+        raise
     except SubmissionBlocked:
         raise
     except UnsupportedCapability:

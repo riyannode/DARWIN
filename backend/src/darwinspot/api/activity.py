@@ -78,8 +78,13 @@ def _run_system_result(
         "SIGNAL_SUPPRESSED",
         "NO_EFFECTIVE_SYMBOLS",
         "EMERGENCY_STOP",
+        "FINANCIAL_WRITES_DISABLED",
     }:
-        return "SKIPPED", run.result_state
+        return "SKIPPED", (
+            "FINANCIAL_WRITES_DISABLED"
+            if run.result_state == "FINANCIAL_WRITES_DISABLED"
+            else run.result_state
+        )
     if run.result_state in {"WAITING_FOR_APPROVAL", "AUTO_AUTHORIZED"}:
         return "PENDING", run.result_state
     if run.result_state == "FAILED":
@@ -479,11 +484,17 @@ def activity(
                 "systemOutcome": (
                     "EXECUTED"
                     if intent.local_state == "FILLED"
+                    else "SKIPPED"
+                    if intent.local_state == "FINANCIAL_WRITES_DISABLED"
                     else "FAILED"
                     if intent.local_state in {"REJECTED_EXCHANGE", "EXPIRED"}
                     else "PENDING"
                 ),
-                "reason": intent.budget_result if intent.budget_result != "PASS" else None,
+                "reason": (
+                    "FINANCIAL_WRITES_DISABLED"
+                    if intent.local_state == "FINANCIAL_WRITES_DISABLED"
+                    else intent.budget_result if intent.budget_result != "PASS" else None
+                ),
             }
             for intent in intents
         ]

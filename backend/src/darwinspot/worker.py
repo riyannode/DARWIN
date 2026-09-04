@@ -33,6 +33,7 @@ from darwinspot.execution.approved import (
     ApprovedExecution,
     account_execution_lock,
 )
+from darwinspot.execution.demo_guard import FinancialWriteBlocked
 from darwinspot.notifications.outbox import (
     CONFIRMATION_KIND,
     EMERGENCY_CANCEL_KIND,
@@ -314,6 +315,41 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
             return
         mark_skipped(
             db, message_id=row.id, worker_id=worker_id, reason="unsupported outbox work kind"
+        )
+    except FinancialWriteBlocked as exc:
+        if row.kind == CONFIRMATION_KIND:
+            intent_id = data.get("intent_id")
+            if isinstance(intent_id, str):
+                intent = db.get(TradeIntent, intent_id)
+                if intent is not None:
+                    state = (
+                        "FINANCIAL_WRITES_DISABLED"
+                        if exc.reason_code == "FINANCIAL_WRITES_DISABLED"
+                        else "BLOCKED"
+                    )
+                    approval = db.scalar(
+                        select(TradeIntentApproval)
+                        .where(TradeIntentApproval.intent_id == intent.id)
+                        .limit(1)
+                    )
+                    if approval is not None and approval.status in {"EXECUTING", "APPROVED"}:
+                        TradeIntentApprovalService(
+                            db, default_ttl_seconds=settings.approval_ttl_seconds
+                        ).consume(
+                            approval.approval_id,
+                            intent_state=state,
+                            reason=exc.reason_code,
+                        )
+                    else:
+                        intent.local_state = state
+                        intent.updated_at = datetime.now(UTC)
+                        db.commit()
+                    Repository(db).complete_run(intent.agent_run_id, state, None, exc.reason_code)
+        mark_skipped(
+            db,
+            message_id=row.id,
+            worker_id=worker_id,
+            reason=exc.reason_code,
         )
     except (TelegramDeliveryError, TelegramNotConfigured) as exc:
         mark_retry(db, message_id=row.id, worker_id=worker_id, error=str(exc), delay_seconds=30)

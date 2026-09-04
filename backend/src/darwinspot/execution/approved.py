@@ -40,7 +40,7 @@ from darwinspot.binance.mapper import (
 )
 from darwinspot.config import get_settings
 from darwinspot.execution.demo_guard import (
-    DemoFinancialWriteBlocked,
+    FinancialWriteBlocked,
     ensure_financial_write_allowed,
 )
 from darwinspot.execution.orders import SubmissionBlocked
@@ -198,9 +198,15 @@ class ApprovedExecution:
                 return ExecutionResult("REVALIDATION_FAILED", reason)
             try:
                 ensure_financial_write_allowed()
-            except DemoFinancialWriteBlocked as exc:
-                self._complete(service, approval, intent, "BLOCKED", str(exc))
-                return ExecutionResult("BLOCKED", str(exc))
+            except FinancialWriteBlocked as exc:
+                state = (
+                    "FINANCIAL_WRITES_DISABLED"
+                    if exc.reason_code == "FINANCIAL_WRITES_DISABLED"
+                    else "BLOCKED"
+                )
+                self._complete(service, approval, intent, state, exc.reason_code)
+                self.repo.complete_run(intent.agent_run_id, state, None, exc.reason_code)
+                return ExecutionResult(state, exc.reason_code)
             if (
                 intent.execution_mode == "HUMAN_APPROVAL"
                 and not self.settings.codex_write_confirmation_verified
@@ -328,14 +334,20 @@ class ApprovedExecution:
             return ExecutionResult("NOT_FOUND", "emergency-stop target is unavailable")
         if connection is None and intent.execution_mode == "HUMAN_APPROVAL":
             return ExecutionResult("AUTH_REQUIRED", "Binance Agent OS connection is unavailable")
-        if intent.local_state in {"CANCELED", "FILLED", "EXPIRED", "REJECTED_EXCHANGE"}:
+        if intent.local_state in {
+            "CANCELED",
+            "FILLED",
+            "EXPIRED",
+            "REJECTED_EXCHANGE",
+            "FINANCIAL_WRITES_DISABLED",
+        }:
             return ExecutionResult(intent.local_state)
         if not intent.binance_order_id:
             return ExecutionResult("CANCEL_UNAVAILABLE", "Binance order identifier is unknown")
         try:
             ensure_financial_write_allowed()
-        except DemoFinancialWriteBlocked as exc:
-            return ExecutionResult("BLOCKED", str(exc))
+        except FinancialWriteBlocked as exc:
+            return ExecutionResult("BLOCKED", exc.reason_code)
         with account_execution_lock(self.repo.db, self.settings.binance_account_lock_key):
             intent.local_state = "CANCEL_PENDING"
             intent.updated_at = datetime.now(UTC)
