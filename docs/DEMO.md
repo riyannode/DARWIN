@@ -61,8 +61,8 @@ GET /api/demo/scenarios/hold
 
 - `valid-buy`: `BUY BTCUSDT`, policy `PASS`, system outcome `SKIPPED`, reason
   `DEMO_EXECUTION_BLOCKED`.
-- `max-notional`: `BUY SOLUSDT`, policy `POLICY_REJECTED`, system outcome
-  `SKIPPED`, reason `MAX_ORDER_NOTIONAL`.
+- `max-notional`: `BUY SOLUSDT`, policy field `REJECTED` (policy-rejected),
+  system outcome `SKIPPED`, reason `MAX_ORDER_NOTIONAL`.
 - `hold`: `HOLD ETHUSDT`, no intent, system outcome `SKIPPED`, reason
   `NO_TRADE`.
 

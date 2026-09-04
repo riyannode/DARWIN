@@ -42,7 +42,7 @@ The three scenarios are:
 | Scenario | Decision | Policy | System outcome |
 | --- | --- | --- | --- |
 | `valid-buy` | `BUY BTCUSDT` | `PASS` | `SKIPPED / DEMO_EXECUTION_BLOCKED` |
-| `max-notional` | `BUY SOLUSDT` | `POLICY_REJECTED / MAX_ORDER_NOTIONAL` | `SKIPPED` |
+| `max-notional` | `BUY SOLUSDT` | `REJECTED` (policy-rejected) / `MAX_ORDER_NOTIONAL` | `SKIPPED` |
 | `hold` | `HOLD ETHUSDT` | `NOT_APPLICABLE` | `SKIPPED / NO_TRADE` |
 
 Stop and reset the judge runtime:
