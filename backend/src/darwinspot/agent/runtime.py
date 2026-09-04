@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -15,6 +16,17 @@ class ModelResponseError(ValueError):
     """Raised when the model response cannot be parsed or validated."""
 
 
+_JSON_FENCE_PATTERN = re.compile(
+    r"```json[ \t]*\r?\n(?P<content>.*?)\r?\n```", re.IGNORECASE | re.DOTALL
+)
+
+
+def _normalize_json_content(content: str) -> str:
+    normalized = content.strip()
+    match = _JSON_FENCE_PATTERN.fullmatch(normalized)
+    return match.group("content").strip() if match else normalized
+
+
 def _response_content(response: Any, operation: str) -> str:
     choices: list[object] | None = getattr(response, "choices", None)
     if not isinstance(choices, list) or not choices:
@@ -25,7 +37,7 @@ def _response_content(response: Any, operation: str) -> str:
     content = getattr(message_object, "content", None)
     if not isinstance(content, str) or not content.strip():
         raise ModelResponseError(f"model returned an empty or invalid {operation} response")
-    return content
+    return _normalize_json_content(content)
 
 
 class AgentRuntime:
