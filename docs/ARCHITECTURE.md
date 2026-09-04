@@ -297,3 +297,27 @@ Manual verification remains required for genuine Codex OAuth, populated
 Binance tools, an exact harmless read-only call, and the real write confirmation
 contract. The first write-path confirmation must be declined and verified to
 produce zero trade.
+
+## Demo Mode
+
+Demo Mode is an explicit, zero-credential product path enabled by
+`DEMO_MODE=true`. Its read-only API computes three deterministic scenarios from
+fixed Binance-format fixtures. Fixtures pass through the same closed-candle
+mappers, typed evidence models, effective-universe calculation, `AgentDecision`,
+budget calculation, and execution policy used by the live decision pipeline.
+
+Demo replaces only external providers: deterministic fixtures replace market and
+account reads, and deterministic decisions replace the live model provider. It
+does not seed production `AgentRun` or `TradeIntent` rows and it does not create
+any financial mutation route.
+
+The model decision and system outcome are separate. The valid BUY scenario has a
+policy `PASS`, then returns `SKIPPED / DEMO_EXECUTION_BLOCKED`. The over-limit
+BUY returns `SKIPPED / POLICY_REJECTED / MAX_ORDER_NOTIONAL`. The HOLD scenario
+returns `SKIPPED / NO_TRADE` and creates no intent.
+
+`DemoFinancialWriteBlocked` is enforced at the shared submission seam, approved
+execution seam, emergency cancellation seam, direct Spot order transport, and
+Codex/Agent OS write transport. It is a backend guard, not a frontend or
+credential-absence assumption. `DEMO_MODE=false` preserves the live transport
+paths.

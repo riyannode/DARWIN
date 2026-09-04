@@ -1,213 +1,199 @@
 # DARWIN
 
-DARWIN is an autonomous Binance Spot trading agent. Give DARWIN a trading
-mandate and hard risk boundaries. DARWIN decides what, when, and how to trade
-within those limits.
+> Give DARWIN a trading mandate and hard risk boundaries. DARWIN decides what,
+> when, and how to trade within those limits.
 
-The owner provides one high-level Trading Mandate. DARWIN uses current market,
-recent closed Binance OHLCV, and account evidence to choose a pair, decide BUY/SELL/HOLD,
-choose quantity and order type, and provide rationale and confidence. The mandate is
-strategy context only; deterministic backend controls remain the authorization source.
+DARWIN is an owner-operated Binance Spot trading agent. The model can choose a
+pair and return a typed `BUY`, `SELL`, or `HOLD` decision, but backend policy,
+budget, freshness, balance, symbol filters, concurrency, and execution-mode
+checks remain the authorization source.
 
-`AUTO_BOUNDED` is the primary autonomous execution path and does not require
-per-order human approval. `HUMAN_APPROVAL` is the secondary supervised path.
+## Judge Quickstart
 
-The direct Spot API base URL is restricted to approved Binance HTTPS hosts, and
-its credentials are never exposed to the frontend, DARWIN AgentRuntime, or
-Telegram. Public historical market data uses the credential-free Binance Spot
-`GET /api/v3/klines` endpoint.
+The fastest way to inspect the product is the deterministic, zero-credential
+Demo Mode:
 
-DARWIN reasons from current ticker, account, order, and filter snapshots plus
-real typed CLOSED Binance Spot OHLCV. It scans every effective configured
-symbol with 10 closed candles each for 15m and 1h, then fetches 48 closed
-candles each for 15m, 1h, and 4h only for the selected pair. Historical bars
-are bounded evidence for model reasoning, not authorization or a guaranteed
-trend prediction.
-
-## Runtime flow
-
-```text
-24/7 scheduler
-  -> lightweight Spot/USDT market universe
-  -> effective universe
-  -> lightweight 15m/1h candidate scan for every effective symbol
-  -> DARWIN chooses one candidate pair
-  -> selected-pair ticker + 15m/1h/4h closed OHLCV + account evidence
-  -> DARWIN decision: BUY / SELL / HOLD
-  -> mandate + risk + budget + execution-policy gate
-  -> durable TradeIntent
-  -> HUMAN_APPROVAL: Telegram proposal -> APPROVE / REJECT / timeout
-     AUTO_BOUNDED: AUTO_POLICY authorization -> informational Telegram signal
-  -> fresh revalidation
-  -> HUMAN_APPROVAL: Codex Agent OS MCP
-     AUTO_BOUNDED: Binance Spot API
-  -> confirmation, if required
-  -> order submission + reconciliation
-  -> Telegram receipt
+```bash
+git clone https://github.com/riyannode/DARWIN.git
+cd DARWIN
+docker compose up --build
 ```
 
-`APPROVE` authorizes fresh revalidation. It never authorizes submission of a
-stale payload. `REJECT`, `APPROVAL_EXPIRED`, and failed revalidation are terminal
-no-write paths.
+Open [http://localhost:3000/demo](http://localhost:3000/demo).
 
-## Ownership model
+Demo Mode requires no `.env`, OpenAI key, Binance key, Binance OAuth, Codex,
+Telegram, funded account, or external LLM account. The Compose path uses the
+backend, frontend, and a local SQLite database only.
 
-DARWIN owns:
+### Demo Mode disclosure
 
-- scheduling and worker leases;
-- market/account evidence acquisition;
-- LLM/model invocation and strategy context;
-- BUY/SELL/HOLD decisions;
-- structured execution policy, budget, risk, and order-size checks;
-- durable TradeIntent and approval state;
-- idempotency, write gating, and reconciliation;
-- emergency stop and audit trail;
-- Telegram proposal/receipt delivery state.
+The `/demo` experience is prominently labelled:
 
-Codex owns only the supported Binance OAuth identity and authenticated MCP
-transport. DARWIN never sends Codex natural-language trading prompts and Codex
-never chooses trades or evaluates DARWIN policy.
+- **DEMO MODE**
+- Deterministic recorded/synthetic Binance-format evidence
+- No LLM API call
+- No live Binance connection
+- Financial writes disabled by a backend guard
 
-## Safety properties
+The three available scenarios are computed by the backend and selected through
+read-only `GET` routes:
 
-- `HUMAN_APPROVAL` ordinary BUY/SELL writes require one durable operator approval.
-- `AUTO_BOUNDED` ordinary BUY/SELL writes require AUTO_POLICY authorization and
-  never bypass deterministic policy, account locking, or fresh revalidation.
-- Telegram callbacks contain only `approve:<approval_id>` or
-  `reject:<approval_id>`; all intent data is resolved server-side.
-- Telegram user ID, chat ID, webhook secret, and bot token are backend-only.
-- Approval TTL defaults to 90 seconds and is bounded to 30..180 seconds.
-- The persisted configured Spot universe bootstraps to exactly `BTCUSDT`,
-  `ETHUSDT`, `BNBUSDT`, `SOLUSDT`, and `XRPUSDT`; this is not a runtime limit or
-  dynamic top-five strategy. An owner can add/remove valid Spot/USDT symbols
-  without source changes. The current structured policy contains exact
-  `allowed_symbols`,
-  `max_order_notional`, and `max_open_actionable_intents`.
-- Proposal admission is atomic under PostgreSQL coordination.
-- One Binance account cannot execute concurrent ordinary financial writes.
-- Fresh market/account/filter/policy checks run immediately before submission.
-- The external-call marker is conservative; `SUBMISSION_UNKNOWN` reconciles
-  before retry.
-- The explicit authenticated emergency-stop command is the only special
-  cancellation path. Model CANCEL/CANCEL_REPLACE and direct web cancellation are
-  disabled.
-- Transfers and withdrawals are unsupported and fail closed.
-- `market_history` uses the credential-free public Binance Spot adapter for
-  candidate scanning and selected-pair detail. Candidate scanning requests
-  `limit=11` and keeps 10 closed candles per `15m`/`1h` interval; final detail
-  requests `limit=49` and keeps 48 closed candles per `15m`/`1h`/`4h` interval.
+| Scenario | Model decision | Policy | System outcome |
+| --- | --- | --- | --- |
+| `valid-buy` | `BUY BTCUSDT` | `PASS` | `SKIPPED / DEMO_EXECUTION_BLOCKED` |
+| `max-notional` | `BUY SOLUSDT` | `REJECTED` | `SKIPPED / POLICY_REJECTED / MAX_ORDER_NOTIONAL` |
+| `hold` | `HOLD ETHUSDT` | Not applicable | `SKIPPED / NO_TRADE` |
 
-## Components
+Demo proves mandate/effective-universe behavior, typed decisions, policy and
+budget evaluation, safe lifecycle presentation, auditability, and product UX.
+It does **not** prove live OpenAI inference, Binance authentication, or live
+order execution.
 
-- `frontend/` — existing Next.js operator UI and secondary approval surface.
-- `backend/` — FastAPI API, DARWIN worker, decision/runtime modules, approval,
-  execution, Codex transport, Telegram adapter, database, and migrations.
-- `docs/` — architecture, deployment, runbook, product, and submission notes.
-- PostgreSQL — source of truth for sessions, mandates, budgets, runs, intents,
-  approvals, order events, and durable work outbox rows.
+## 30-second architecture
 
-The purpose-specific PostgreSQL `outbox_messages` table carries Telegram
-proposal/receipt delivery and bounded approved-execution/emergency-cancel work.
-It is not a generic message bus.
-
-## Safe startup and configuration
-
-Copy `backend/.env.example` to `backend/.env` and keep it backend-only. DARWIN
-starts safely while Codex/Binance authentication is pending. In that state it
-reports `AUTH_REQUIRED`/`NOT_AUTHENTICATED`, produces no fabricated Binance
-results, and performs no financial write.
-
-The default transport is:
-
-```dotenv
-BINANCE_AGENT_OS_TRANSPORT=codex
-CODEX_APP_SERVER_COMMAND=codex app-server --stdio
-CODEX_APP_SERVER_VERSION=0.153.0
-CODEX_WRITE_CONFIRMATION_VERIFIED=false
-APPROVAL_TTL_SECONDS=90
-SIGNAL_COOLDOWN_SECONDS=300
+```mermaid
+flowchart TD
+    M[Trading Mandate] --> E[Effective Universe]
+    U[Configured Universe] --> E
+    G[Hard Guardrails] --> E
+    E --> C[Candidate OHLCV Scan\n15m + 1h × N closed]
+    C --> P[Deterministic pair selection]
+    P --> D[Selected-pair deep scan\n15m / 1h / 4h × 48 closed]
+    D --> A[BUY / SELL / HOLD]
+    A --> R[Deterministic guardrails]
+    R --> AB[AUTO_BOUNDED\nBinance Spot API]
+    R --> HA[HUMAN_APPROVAL\nCodex / Agent OS MCP]
+    AB --> X[Reconciliation]
+    HA --> X
+    X --> T[AgentRun audit]
 ```
 
-Telegram requires all four backend-only values together:
+The production pipeline scans every effective symbol with 10 closed `15m` and
+`1h` candles, selects one pair, then fetches 48 closed candles for the selected
+pair across `15m`, `1h`, and `4h`. The final model decision is bound to that
+selected pair. Demo Mode reuses the mapper, typed evidence models, effective
+universe logic, `AgentDecision`, budget calculation, and deterministic policy
+against fixed fixture data.
 
-```dotenv
-TELEGRAM_BOT_TOKEN=<bot token>
-TELEGRAM_OPERATOR_CHAT_ID=<chat id>
-TELEGRAM_OPERATOR_USER_ID=<user id>
-TELEGRAM_WEBHOOK_SECRET=<secret token>
+## Two product experiences
+
+### LIVE MODE
+
+LIVE MODE uses the configured providers and persisted production state:
+
+- public Binance Spot market-history adapter for closed OHLCV;
+- Binance Spot API for `AUTO_BOUNDED` authenticated reads/writes;
+- Codex App Server plus Binance Agent OS MCP for `HUMAN_APPROVAL`;
+- OpenAI or the configured OpenAI-compatible gateway for the decision runtime;
+- PostgreSQL for mandates, budgets, runs, intents, approvals, outbox work, and
+  order events;
+- Telegram for optional approval and receipt delivery.
+
+The live operator UI requires owner authentication. Missing authentication or
+provider configuration reports unavailable state and does not fabricate account
+or market results.
+
+### DEMO MODE
+
+`DEMO_MODE=true` enables only the deterministic read-only judge routes. The
+backend financial-write guard raises `DemoFinancialWriteBlocked` before any
+new-order or cancellation transport can be reached. The direct Spot and Codex
+write seams also enforce the guard, so missing credentials are not the safety
+mechanism.
+
+## AUTO_BOUNDED vs HUMAN_APPROVAL
+
+| Mode | DARWIN behavior | Financial transport |
+| --- | --- | --- |
+| `AUTO_BOUNDED` | Decides and may execute within backend-enforced limits; no per-order human approval | Binance Spot API |
+| `HUMAN_APPROVAL` | Decides, then waits for supervised approval and fresh revalidation | Codex + Binance Agent OS MCP |
+
+Public OHLCV mapping is not an authorization transport. Both modes use the
+same typed closed-candle evidence and deterministic policy checks.
+
+## Safety model
+
+The backend owns the trusted decisions:
+
+- one canonical free-text Trading Mandate;
+- configured universe, mandate Allowed Symbols, and effective intersection;
+- Max Per Trade, rolling 24h BUY Budget, and Max Concurrent Trades;
+- balances, symbol filters, freshness, open-order conflicts, and emergency stop;
+- durable idempotent intents and state transitions;
+- fresh revalidation before a possible write;
+- `SUBMISSION_UNKNOWN` and reconciliation semantics;
+- Spot-only execution with transfers and withdrawals unsupported.
+
+`HOLD` is a model decision. `SKIPPED` is a system outcome. A skipped demo BUY
+is never an executed order.
+
+## Agent OS integration
+
+Codex is an authentication/transport adapter only. DARWIN chooses the pair,
+produces the model decision, evaluates policy, owns lifecycle state, and
+reconciles exchange state. DARWIN does not send Codex natural-language trading
+prompts, and Codex does not choose trades or override policy.
+
+The authenticated live bridge remains `PENDING` until genuine OAuth, read-only
+MCP, and write-confirmation behavior have been manually verified.
+
+## Live setup
+
+Copy the backend example for live configuration only:
+
+```bash
+cp backend/.env.example backend/.env
 ```
 
-Do not commit `backend/.env`, Telegram credentials, OAuth codes, cookies,
-bearer tokens, or Codex credential material.
+Set `DATABASE_URL`, `OPENAI_API_KEY`, `OWNER_PASSWORD_HASH`,
+`FRONTEND_ORIGIN`, and the required Codex/Binance/Telegram values for the
+chosen mode. Keep `DEMO_MODE=false` for live operation. Never commit secrets.
 
-## Verification status
-
-Verified in this implementation without operator Binance login:
-
-- reversible Alembic migration;
-- deterministic policy and lifecycle behavior;
-- durable approval/outbox logic;
-- unauthenticated Codex App Server initialization/status handling;
-- Codex write blocking while confirmation verification is false;
-- strict backend lint/type checks;
-- frontend lint/typecheck/production build;
-- local API and Chromium checks where configured.
-
-Current status:
-
-```text
-Codex/Binance transport implementation: IMPLEMENTED
-Authenticated live bridge verification: PENDING
-Production readiness: PARTIALLY VERIFIED
-```
-
-## Deferred manual verification
-
-The operator must later perform these steps with a genuine Codex-managed Binance
-OAuth session:
-
-1. Authenticate Binance through Codex App Server.
-2. Confirm authenticated `mcpServerStatus/list`.
-3. Confirm a populated Binance tool inventory.
-4. Run an exact harmless read-only `mcpServer/tool/call` and inspect its
-   structured result.
-5. Observe the real write confirmation/elicitation contract.
-6. Decline the first write-path confirmation.
-7. Prove that zero Binance trade was created.
-8. Only after that, deliberately verify any approved write in a controlled
-   operator-owned account.
-
-Telegram has no official sandbox. Use a dedicated test bot/private chat for real
-Bot API verification; do not replace it with a mocked acceptance claim.
-
-## Development
-
-Backend:
+For local development without Compose:
 
 ```bash
 cd backend
 uv sync --frozen
 PYTHONPATH=src uv run alembic upgrade head
 PYTHONPATH=src uv run uvicorn darwinspot.main:app --host 127.0.0.1 --port 8000
-```
 
-Worker:
-
-```bash
-cd backend
-PYTHONPATH=src uv run python -m darwinspot.worker
-```
-
-Frontend:
-
-```bash
-cd frontend
+cd ../frontend
 pnpm install --frozen-lockfile
 BACKEND_URL=http://127.0.0.1:8000 pnpm build
 HOSTNAME=127.0.0.1 PORT=3000 pnpm start
 ```
 
-The local verification harness is ignored under `.local-tests/` and is never
-part of the production source or pull request. It covers the bounded Binance
-kline mapper, closed-candle filtering, freshness, count-independent candidate
-scanning, selected-pair ordering, and persisted decision evidence.
+## Repository structure
+
+```text
+frontend/   Next.js operator and judge interfaces
+backend/    FastAPI API, decision pipeline, policy, transports, persistence
+ docs/      architecture, deployment, runbooks, product, demo notes
+```
+
+## Video run-of-show
+
+A truthful 60–90 second walkthrough can show:
+
+1. **0–10s:** thesis and the mandate → scan → decision → guardrails diagram.
+2. **10–25s:** configured universe, Allowed Symbols, and hard guardrails.
+3. **25–40s:** candidate symbols and selected-pair evidence.
+4. **40–55s:** closed 15m/1h/4h OHLCV, decision, rationale, and confidence.
+5. **55–70s:** policy evaluation and explicit safe system outcome.
+6. **70–90s:** AUTO_BOUNDED, HUMAN_APPROVAL, reconciliation, and auditability.
+
+Do not present Demo Mode fixtures as live Binance data.
+
+## Verification status
+
+Implemented and locally verified:
+
+- backend Ruff, Pyright, Python compilation;
+- frontend ESLint, TypeScript, and production build;
+- deterministic Demo Mode API responses for all three scenarios;
+- backend write-barrier paths and read-only demo routes.
+
+The host used for this branch does not have Docker or Chromium installed, so
+Compose image execution and browser pixel verification remain pending. GitHub
+has no configured check runs for this repository. Live Codex/Binance
+authentication and funded financial writes were not performed.
