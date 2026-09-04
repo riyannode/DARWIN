@@ -14,6 +14,7 @@ from darwinspot.agent.cycle import (
     CycleConfigurationError,
     CycleUnavailable,
     SubmissionUncertain,
+    reconcile_open_intents,
     run_cycle,
 )
 from darwinspot.agent.runtime import AgentRuntime, ModelResponseError
@@ -23,12 +24,17 @@ from darwinspot.binance.codex_transport import (
     CodexAuthRequired,
     CodexTransportError,
     ElicitationAction,
+    discard_pending_confirmation,
     resolve_pending_confirmation,
 )
 from darwinspot.binance.factory import build_binance_client
 from darwinspot.binance.mapper import BinanceMappingError
 from darwinspot.config import Settings, get_settings
-from darwinspot.execution.approved import ApprovedExecution
+from darwinspot.execution.approved import (
+    ApprovedExecution,
+    account_execution_lock,
+    requires_reconciliation,
+)
 from darwinspot.notifications.outbox import (
     CONFIRMATION_KIND,
     EMERGENCY_CANCEL_KIND,
@@ -122,6 +128,7 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
                 if expires_at.tzinfo is None:
                     expires_at = expires_at.replace(tzinfo=UTC)
                 if expires_at.astimezone(UTC) <= datetime.now(UTC):
+                    await discard_pending_confirmation(intent.id)
                     approval = db.scalar(
                         select(TradeIntentApproval)
                         .where(TradeIntentApproval.intent_id == intent.id)
@@ -222,6 +229,31 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
                 return
             intent = db.get(TradeIntent, intent_id)
             mode = intent.execution_mode if intent is not None else "HUMAN_APPROVAL"
+            if intent is not None and requires_reconciliation(intent):
+                client = build_binance_client(
+                    settings, Repository(db).current_connection(), mode=mode
+                )
+                try:
+                    with account_execution_lock(db, settings.binance_account_lock_key):
+                        db.refresh(intent)
+                        if requires_reconciliation(intent):
+                            await reconcile_open_intents(Repository(db), client)
+                finally:
+                    transport = getattr(client, "transport", None)
+                    if transport is not None:
+                        await transport.close()
+                db.refresh(intent)
+                if intent.local_state == "SUBMISSION_UNKNOWN":
+                    mark_retry(
+                        db,
+                        message_id=row.id,
+                        worker_id=worker_id,
+                        error="submission reconciliation remains unresolved",
+                        delay_seconds=30,
+                    )
+                else:
+                    mark_sent(db, message_id=row.id, worker_id=worker_id)
+                return
             client = build_binance_client(settings, Repository(db).current_connection(), mode=mode)
             result: Any = None
             try:

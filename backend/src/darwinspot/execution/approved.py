@@ -54,6 +54,12 @@ class RevalidationRejected(ExecutionUnavailable):
     pass
 
 
+def requires_reconciliation(intent: TradeIntent) -> bool:
+    return intent.local_state == "SUBMISSION_UNKNOWN" or (
+        intent.local_state == "SUBMITTING" and intent.external_call_started_at is not None
+    )
+
+
 @dataclass(frozen=True)
 class ExecutionResult:
     state: str
@@ -105,6 +111,15 @@ class ApprovedExecution:
         service = TradeIntentApprovalService(
             self.repo.db, default_ttl_seconds=self.settings.approval_ttl_seconds
         )
+        candidate_intent: TradeIntent | None = None
+        if approval_id is not None:
+            candidate_approval = self.repo.db.get(TradeIntentApproval, approval_id)
+            if candidate_approval is not None:
+                candidate_intent = self.repo.db.get(TradeIntent, candidate_approval.intent_id)
+        elif intent_id is not None:
+            candidate_intent = self.repo.db.get(TradeIntent, intent_id)
+        if candidate_intent is not None and requires_reconciliation(candidate_intent):
+            return await self._reconcile_only(candidate_intent)
         if approval_id is not None:
             approval, intent = service.claim_for_execution(approval_id)
         elif intent_id is not None:
@@ -119,15 +134,13 @@ class ApprovedExecution:
             return ExecutionResult("AUTH_REQUIRED", "Binance Agent OS connection is unavailable")
         with account_execution_lock(self.repo.db, self.settings.binance_account_lock_key):
             self.repo.db.refresh(intent)
-            if intent.external_call_started_at is not None or intent.local_state in {
-                "SUBMITTING",
-                "SUBMISSION_UNKNOWN",
-                "WAITING_FOR_EXECUTION_CONFIRMATION",
-            }:
-                from darwinspot.agent.cycle import reconcile_open_intents
-
+            if requires_reconciliation(intent) or (
+                intent.local_state == "WAITING_FOR_EXECUTION_CONFIRMATION"
+            ):
                 if intent.local_state == "WAITING_FOR_EXECUTION_CONFIRMATION":
                     return ExecutionResult(intent.local_state)
+                from darwinspot.agent.cycle import reconcile_open_intents
+
                 await reconcile_open_intents(self.repo, self.client)
                 return ExecutionResult(intent.local_state)
             try:
@@ -222,6 +235,16 @@ class ApprovedExecution:
             state = intent.local_state
             self._complete(service, approval, intent, state, state)
             return ExecutionResult(state)
+
+    async def _reconcile_only(self, intent: TradeIntent) -> ExecutionResult:
+        from darwinspot.agent.cycle import reconcile_open_intents
+
+        with account_execution_lock(self.repo.db, self.settings.binance_account_lock_key):
+            self.repo.db.refresh(intent)
+            if not requires_reconciliation(intent):
+                return ExecutionResult(intent.local_state)
+            await reconcile_open_intents(self.repo, self.client)
+            return ExecutionResult(intent.local_state)
 
     @staticmethod
     def _complete(

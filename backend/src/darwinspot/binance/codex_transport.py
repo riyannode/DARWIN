@@ -84,6 +84,16 @@ async def resolve_pending_confirmation(
     except CodexTransportError:
         return False
     _pending_confirmations.pop(intent_id, None)
+    await transport.close()
+    return True
+
+
+async def discard_pending_confirmation(intent_id: str) -> bool:
+    pending = _pending_confirmations.pop(intent_id, None)
+    if pending is None:
+        return False
+    transport, _request_id = pending
+    await transport.close()
     return True
 
 
