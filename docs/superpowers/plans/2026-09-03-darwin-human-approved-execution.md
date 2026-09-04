@@ -15,7 +15,9 @@
 - Start from fresh `origin/main` and never modify the original dirty investigation tree.
 - DARWIN owns scheduling, evidence, model decisions, mandate context, structured policy, budget, risk, intents, approvals, execution gates, reconciliation, emergency stop, and audit.
 - Codex owns only supported Binance OAuth identity and authenticated MCP transport; no natural-language trading prompts.
-- `AUTO_BOUNDED` means autonomous monitoring/decision/signal generation only; it never authorizes a Binance write.
+- `AUTO_BOUNDED` means bounded autonomous Spot execution through the direct
+  Binance API after the same deterministic policy and fresh revalidation; it
+  never creates a human approval row.
 - Telegram callback data is only `approve:<approval_id>` or `reject:<approval_id>`.
 - Approval TTL defaults to 90 seconds and is backend-bounded to 30 through 180 seconds; the LLM cannot choose it.
 - One PostgreSQL database is authoritative; do not add Redis, Kafka, workflow frameworks, or event sourcing.

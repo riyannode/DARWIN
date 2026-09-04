@@ -104,6 +104,7 @@ class TelegramNotifier:
             f"<b>Mandate:</b> {html.escape(mandate_result)}\n"
             f"<b>Risk:</b> {html.escape(risk_result)}\n"
             f"<b>Budget:</b> {html.escape(budget_result)}\n"
+            "<b>Mode:</b> HUMAN_APPROVAL\n"
             f"<b>Intent ID:</b> <code>{html.escape(intent.id)}</code>\n"
             f"<b>Expires in:</b> {expires} seconds"
         )
@@ -116,6 +117,28 @@ class TelegramNotifier:
             f"Intent <code>{html.escape(intent.id)}</code>\n"
             f"{html.escape(intent.pair)} · {html.escape(intent.side)}\n"
             f"State: <b>{html.escape(result)}</b>{suffix}"
+        )
+
+    @staticmethod
+    def format_auto_signal(intent: TradeIntent) -> str:
+        try:
+            value = json.loads(intent.policy_evidence)
+            policy = cast(dict[str, Any], value) if isinstance(value, dict) else {}
+        except json.JSONDecodeError:
+            policy = {}
+        notional = intent.committed_notional or intent.quote_notional or Decimal("0")
+        confidence = format(
+            (Decimal(str(intent.confidence)) * Decimal("100")).quantize(Decimal("0.01")), "f"
+        ).rstrip("0").rstrip(".")
+        return (
+            "<b>DARWIN AUTO SIGNAL</b>\n\n"
+            f"<b>Pair:</b> {html.escape(intent.pair)} · {html.escape(intent.side)}\n"
+            f"<b>Notional:</b> {html.escape(str(notional))} USDT\n"
+            f"<b>Confidence:</b> {confidence}%\n"
+            f"<b>Why:</b> {html.escape(intent.rationale[:1000])}\n"
+            f"<b>Mode:</b> {html.escape(intent.execution_mode)}\n"
+            f"<b>Policy:</b> {html.escape(str(policy.get('execution_policy_result', 'PASS')))}\n"
+            "<b>Execution:</b> pending"
         )
 
     async def send_proposal(
@@ -143,6 +166,16 @@ class TelegramNotifier:
                         ]
                     ]
                 },
+            },
+        )
+
+    async def send_auto_signal(self, intent: TradeIntent) -> DeliveryResult:
+        return await self._send(
+            "sendMessage",
+            {
+                "chat_id": self.settings.telegram_operator_chat_id,
+                "text": self.format_auto_signal(intent),
+                "parse_mode": "HTML",
             },
         )
 

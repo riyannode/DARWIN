@@ -115,9 +115,13 @@ failure/retry state and performs no fabricated Binance read or write.
 3. Set exact allowed symbols, maximum order notional, and maximum open
    actionable intents.
 4. Set the rolling 24-hour budget.
-5. Start in `READ_ONLY`, then use `AUTO_BOUNDED` only for continuous monitoring,
-   decisions, and proposals. `AUTO_BOUNDED` never submits an order.
-6. Confirm the UI shows Codex `AUTH_REQUIRED`/`UNVERIFIED` until manual setup.
+5. Configure the persisted Spot universe. It bootstraps to `BTCUSDT`, `ETHUSDT`,
+   `BNBUSDT`, and `SOLUSDT`; adding a symbol here does not authorize it in the
+   mandate.
+6. Start in `HUMAN_APPROVAL` until Codex OAuth and confirmation behavior are
+   manually verified. `AUTO_BOUNDED` uses the same policy/revalidation flow and
+   the direct Spot API, with Telegram informational only.
+7. Confirm the UI shows Codex `AUTH_REQUIRED`/`UNVERIFIED` until manual setup.
 
 ## 6. Telegram webhook
 

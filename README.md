@@ -1,12 +1,14 @@
 # DARWIN
 
 DARWIN is an autonomous Binance Spot market-monitoring and decision runtime with
-human-controlled execution. It continuously collects live evidence, asks the
+two explicit execution modes. It continuously collects live evidence, asks the
 DARWIN `AgentRuntime` for a typed BUY/SELL/HOLD decision, applies deterministic
-policy and budget checks, creates durable `TradeIntent` proposals, and signals
-the operator through Telegram.
+policy and budget checks, creates durable `TradeIntent` records, and signals the
+operator through Telegram.
 
-DARWIN can decide continuously. It never performs unattended financial writes.
+DARWIN remains the only decision-making agent. HUMAN_APPROVAL requires operator
+approval; AUTO_BOUNDED can execute through the narrow Binance Spot API only
+after the same policy, lock, and fresh revalidation checks.
 
 ## Runtime flow
 
@@ -15,12 +17,12 @@ DARWIN can decide continuously. It never performs unattended financial writes.
   -> market/account evidence
   -> DARWIN decision: BUY / SELL / HOLD
   -> mandate + risk + budget + execution-policy gate
-  -> durable TradeIntent WAITING_FOR_APPROVAL
-  -> Telegram proposal
-  -> APPROVE / REJECT / timeout
+  -> durable TradeIntent
+  -> HUMAN_APPROVAL: Telegram proposal -> APPROVE / REJECT / timeout
+     AUTO_BOUNDED: AUTO_POLICY authorization -> informational Telegram signal
   -> fresh revalidation
-  -> Codex transport (if configured and authenticated)
-  -> Binance Agent OS MCP
+  -> HUMAN_APPROVAL: Codex Agent OS MCP
+     AUTO_BOUNDED: Binance Spot API
   -> confirmation, if required
   -> order submission + reconciliation
   -> Telegram receipt
@@ -50,14 +52,17 @@ never chooses trades or evaluates DARWIN policy.
 
 ## Safety properties
 
-- `AUTO_BOUNDED` means autonomous monitoring, analysis, decision, and signal
-  generation only. It does not enable automatic Binance writes.
-- Ordinary BUY/SELL writes require one durable operator approval.
+- `HUMAN_APPROVAL` ordinary BUY/SELL writes require one durable operator approval.
+- `AUTO_BOUNDED` ordinary BUY/SELL writes require AUTO_POLICY authorization and
+  never bypass deterministic policy, account locking, or fresh revalidation.
 - Telegram callbacks contain only `approve:<approval_id>` or
   `reject:<approval_id>`; all intent data is resolved server-side.
 - Telegram user ID, chat ID, webhook secret, and bot token are backend-only.
 - Approval TTL defaults to 90 seconds and is bounded to 30..180 seconds.
-- The current structured policy contains only exact `allowed_symbols`,
+- The persisted configured Spot universe defaults to exactly `BTCUSDT`,
+  `ETHUSDT`, `BNBUSDT`, and `SOLUSDT`; an owner can add/remove valid Spot/USDT
+  symbols without source changes. The current structured policy contains exact
+  `allowed_symbols`,
   `max_order_notional`, and `max_open_actionable_intents`.
 - Proposal admission is atomic under PostgreSQL coordination.
 - One Binance account cannot execute concurrent ordinary financial writes.

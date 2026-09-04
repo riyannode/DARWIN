@@ -41,7 +41,10 @@ class BinanceConnection(Base):
 class AgentConfig(Base):
     __tablename__ = "agent_configs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    mode: Mapped[str] = mapped_column(String(32), default="READ_ONLY")
+    mode: Mapped[str] = mapped_column(String(32), default="HUMAN_APPROVAL")
+    supported_symbols: Mapped[str] = mapped_column(
+        Text, default='["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT"]'
+    )
     active_mandate_version: Mapped[str | None] = mapped_column(String(36))
     schedule_interval: Mapped[int] = mapped_column(default=300)
     state: Mapped[str] = mapped_column(String(32), default="DISCONNECTED")
@@ -113,6 +116,10 @@ class TradeIntent(Base):
     revalidation_failed_reason: Mapped[str | None] = mapped_column(Text)
     write_request_hash: Mapped[str | None] = mapped_column(String(64))
     external_call_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    execution_mode: Mapped[str] = mapped_column(String(32), default="HUMAN_APPROVAL")
+    execution_transport: Mapped[str] = mapped_column(String(32), default="CODEX_AGENT_OS_MCP")
+    authorization_source: Mapped[str | None] = mapped_column(String(32))
+    authorized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

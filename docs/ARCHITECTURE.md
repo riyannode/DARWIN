@@ -8,8 +8,9 @@ decision plus a bounded operator-facing summary. The model cannot authorize a
 financial write.
 
 Codex is an optional transport/authentication adapter only. The configured
-primary runtime is Codex App Server 0.153.0 over stdio JSON-RPC. DARWIN sends
-exact server/tool/arguments requests to Codex and never sends natural-language
+HUMAN_APPROVAL uses Codex App Server 0.153.0 over stdio JSON-RPC. AUTO_BOUNDED
+uses the narrow backend-only Binance Spot REST adapter. DARWIN sends exact
+server/tool/arguments requests to Codex and never sends natural-language
 trading prompts. Codex forwards the authenticated Binance Agent OS MCP session.
 
 The transport supports only the exact inspected operations:
@@ -30,6 +31,11 @@ When authentication is absent, transport state is `AUTH_REQUIRED` or
 `NOT_AUTHENTICATED`; the API and worker remain startable, no Binance data is
 fabricated, and no write is attempted.
 
+The Spot REST adapter uses only exchange metadata, ticker, account, open orders,
+trade history, order status, order submission, and order cancellation. Its
+credentials are backend-only and must belong to a dedicated Spot-trading-only
+key with withdrawals disabled and IP restrictions where available.
+
 ## Runtime
 
 ```text
@@ -38,11 +44,14 @@ scheduler
       -> read-only Binance/Codex evidence
       -> DARWIN AgentRuntime
       -> deterministic execution policy
-      -> TradeIntent + TradeIntentApproval + Telegram outbox
+      -> effective configured-universe/mandate/live-Spot intersection
+      -> TradeIntent
+          HUMAN_APPROVAL -> TradeIntentApproval + Telegram proposal outbox
+          AUTO_BOUNDED -> AUTO_POLICY + informational Telegram outbox
   -> TelegramApprovalAdapter / WebApprovalAdapter
       -> one shared approval state machine
   -> ApprovedExecution
-      -> approval claim
+      -> human approval claim OR AUTO_POLICY claim
       -> account-scoped PostgreSQL advisory lock
       -> fresh evidence and policy revalidation
       -> optional observed Codex/Binance elicitation
@@ -53,12 +62,17 @@ scheduler
 
 ### DecisionCycle
 
-`DecisionCycle` acquires current market universe, selected ticker, balances,
-open orders, recent activity, and symbol filters. It asks `AgentRuntime` for a
-typed BUY/SELL/HOLD. HOLD records a run only. BUY/SELL passes through backend
-checks before it can create an actionable intent:
+`DecisionCycle` acquires current Binance Spot metadata and computes the
+intersection of persisted `AgentConfig.supported_symbols`, current mandate
+`allowed_symbols`, and currently valid Spot/USDT symbols with required filters.
+It passes only that effective universe to `AgentRuntime`, then acquires the
+selected ticker, balances, open orders, recent activity, and filters. It asks
+the same DARWIN runtime for a typed BUY/SELL/HOLD. HOLD records a run only.
+BUY/SELL passes through backend checks before it can create an actionable intent:
 
+- exact symbol in the configured trading universe;
 - exact symbol in `allowed_symbols`;
+- currently valid Binance Spot/USDT metadata and required filters;
 - computed notional at or below `max_order_notional`;
 - atomic outstanding-intent limit;
 - rolling 24-hour buy budget;
@@ -69,8 +83,9 @@ checks before it can create an actionable intent:
 - emergency stop off;
 - spot-only execution policy.
 
-A rejected model proposal creates no executable approval and does not resize or
-mutate the proposal.
+A rejected model proposal creates no executable authorization and does not
+resize or mutate the proposal. An out-of-effective-universe model result is
+rejected deterministically and audited.
 
 ### TradeIntentApproval
 
@@ -92,7 +107,7 @@ accepted before expiry is never later expired because execution takes longer.
 
 ### ApprovedExecution
 
-Approved execution first claims:
+Human-approved execution first claims:
 
 ```text
 approval APPROVED -> EXECUTING
@@ -110,6 +125,12 @@ intent becomes `WAITING_FOR_EXECUTION_CONFIRMATION` while approval remains
 approval. Acceptance proceeds to the write seam. No confirmation is auto-
 answered.
 
+AUTO_BOUNDED claims `AUTO_AUTHORIZED -> REVALIDATING` without creating a
+`TradeIntentApproval` row. It uses the same account lock, fresh evidence,
+newest policy, write marker, submission, reconciliation, and result outbox.
+The only difference is `AUTO_POLICY` authorization and the Binance Spot API
+transport; it never bypasses deterministic policy.
+
 Immediately before calling the external write seam, DARWIN persists a final
 request hash and `external_call_started_at`. If the marker is absent, recovery
 is a known pre-call path. If present, the call may have crossed the external
@@ -124,10 +145,21 @@ boundary; reconciliation wins over retry. The marker never proves success.
 - `max_order_notional` numeric;
 - `max_open_actionable_intents` integer.
 
+`agent_configs.supported_symbols` is the authoritative persisted configured Spot
+universe. Its bootstrap default is exactly `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, and
+`SOLUSDT`. Owner-only settings can add or remove valid Spot/USDT symbols; this
+does not mutate historical mandates.
+
+Every new `trade_intents` row stores `execution_mode`, `execution_transport`,
+`authorization_source`, and `authorized_at`. Human intents use
+`CODEX_AGENT_OS_MCP` and receive `TELEGRAM`/`WEB` authorization only after
+approval. Autonomous intents use `BINANCE_SPOT_API` and `AUTO_POLICY`.
+
 `trade_intents.local_state` distinguishes approval expiry from exchange expiry:
 
 ```text
 WAITING_FOR_APPROVAL -> APPROVED -> REVALIDATING
+AUTO_AUTHORIZED -> REVALIDATING
 WAITING_FOR_APPROVAL -> REJECTED
 WAITING_FOR_APPROVAL -> APPROVAL_EXPIRED
 REVALIDATING -> REVALIDATION_FAILED
@@ -152,8 +184,8 @@ retry timestamps, and bounded errors. Financial execution state is always read
 from the intent/approval tables, not inferred from outbox status.
 
 Proposal admission locks the agent/account scope while resolving the current
-policy, counting actionable intents, and creating intent, approval, and proposal
-outbox rows. Thus `max_open_actionable_intents=1` cannot be exceeded by two
+policy, counting actionable intents, and creating intent plus the mode-specific
+authorization and outbox rows. Thus `max_open_actionable_intents=1` cannot be exceeded by two
 DecisionCycle replicas.
 
 The same protected admission operation enforces `SIGNAL_COOLDOWN_SECONDS` for
@@ -169,7 +201,7 @@ lock when the process/session dies.
 ## Emergency stop and write closure
 
 The authenticated operator emergency-stop command blocks new proposals and
-ordinary execution claims, records targeted intent/order IDs in an audit run,
+ordinary execution claims in both modes, records targeted intent/order IDs in an audit run,
 and queues cancellation work. `ApprovedExecution` handles that narrow
 operator-command branch and keeps cancellation in `CANCEL_PENDING` until
 exchange reconciliation reaches a terminal state.
@@ -184,10 +216,11 @@ attempt/delivery, approval/rejection/expiry, revalidation, transport state,
 confirmation, submission, and reconciliation. Logs redact tokens, credentials,
 OAuth codes, cookies, and authorization headers.
 
-Codex process death, OAuth loss, stale evidence, malformed model output,
+Codex process death, OAuth loss, Spot API credential/configuration loss, stale evidence, malformed model output,
 ambiguous tool discovery, notification failure, and uncertain exchange results
-all fail closed. Telegram failures preserve the durable approval and expose
-notification delivery state; they never auto-execute.
+all fail closed. Telegram failures preserve human authorization or autonomous
+execution state and expose notification delivery state; they never change
+financial authorization semantics.
 
 ## Verification status
 

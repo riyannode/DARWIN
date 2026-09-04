@@ -9,8 +9,9 @@ execution through explicit human approval.
 One owner configures one Spot trading mandate, a small structured execution
 policy, a rolling 24-hour buy budget, and an operating mode. DARWIN continuously
 collects evidence and produces typed BUY, SELL, or HOLD decisions. BUY/SELL
-become durable `TradeIntent` proposals and Telegram signals. No unattended
-monetary execution is allowed.
+become durable `TradeIntent` records. HUMAN_APPROVAL produces Telegram proposals;
+AUTO_BOUNDED produces buttonless informational signals and may execute only
+through the bounded Spot API after deterministic revalidation.
 
 ## Authority model
 
@@ -25,10 +26,20 @@ monetary execution is allowed.
 
 ## Modes
 
-- `READ_ONLY`: analyze and display live evidence without proposals/writes.
-- `APPROVAL_REQUIRED`: create durable proposals requiring operator approval.
-- `AUTO_BOUNDED`: monitor, analyze, decide, and signal autonomously; every
-  ordinary Binance write still requires explicit approval.
+- `HUMAN_APPROVAL`: create durable proposals requiring operator approval, then
+  execute through the genuine Codex Agent OS MCP transport.
+- `AUTO_BOUNDED`: use the same DARWIN decision, deterministic policy, fresh
+  revalidation, lock, and reconciliation flow, then execute through the narrow
+  Binance Spot API without per-order approval. Telegram is informational.
+
+Both modes are bounded by the current configured Spot universe, mandate,
+USDT-only Spot metadata, budget, exposure, balance, and Binance filters.
+
+DARWIN ships with the initial configured universe `BTCUSDT`, `ETHUSDT`,
+`BNBUSDT`, and `SOLUSDT`. The authenticated owner can add or remove valid
+Binance Spot/USDT symbols without a source change. Configured symbols are not
+automatically mandate-authorized; actionable eligibility is the intersection
+of configured universe, current mandate, current Binance validity, and policy.
 
 ## State and safety
 

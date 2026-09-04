@@ -18,12 +18,15 @@ class ExecutionPolicy:
     allowed_symbols: frozenset[str]
     max_order_notional: Decimal
     max_open_actionable_intents: int
+    configured_symbols: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.allowed_symbols:
             raise ValueError("allowed_symbols must not be empty")
         if any(symbol != symbol.upper() for symbol in self.allowed_symbols):
             raise ValueError("allowed_symbols must contain uppercase symbols")
+        if any(symbol != symbol.upper() for symbol in self.configured_symbols):
+            raise ValueError("configured_symbols must contain uppercase symbols")
         if not self.max_order_notional.is_finite() or self.max_order_notional <= 0:
             raise ValueError("max_order_notional must be finite and positive")
         if self.max_open_actionable_intents <= 0:
@@ -64,6 +67,7 @@ def evaluate_execution_policy(
     budget: BudgetSnapshot,
     emergency_stop: bool,
     actionable_intent_count: int,
+    eligible_symbols: frozenset[str] | None = None,
 ) -> PolicyEvaluation:
     if emergency_stop:
         return _rejected("emergency stop is active")
@@ -71,6 +75,10 @@ def evaluate_execution_policy(
         return _rejected("only BUY and SELL decisions can be actionable")
     if decision.pair is None or decision.pair not in policy.allowed_symbols:
         return _rejected("symbol is not in allowed_symbols")
+    if policy.configured_symbols and decision.pair not in policy.configured_symbols:
+        return _rejected("symbol is not in configured trading universe")
+    if eligible_symbols is not None and decision.pair not in eligible_symbols:
+        return _rejected("symbol is not currently valid in the effective Spot/USDT universe")
     if decision.pair != market.symbol or decision.pair != filters.symbol:
         return _rejected("risk evidence does not match the decision pair")
     if actionable_intent_count >= policy.max_open_actionable_intents:

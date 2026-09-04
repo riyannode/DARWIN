@@ -2,9 +2,9 @@
 
 ## One-line description
 
-DARWIN is a 24/7 autonomous Binance Agent OS decision and risk runtime that
-creates bounded Telegram-approved trade intents while keeping execution under
-human control.
+DARWIN is a 24/7 autonomous Binance Agent OS decision and risk runtime with
+HUMAN_APPROVAL and AUTO_BOUNDED execution modes sharing one agent and policy
+pipeline.
 
 ## Short description
 
@@ -23,8 +23,9 @@ never chooses trades.
 
 ## Safety claims
 
-- No unattended monetary execution.
-- `AUTO_BOUNDED` means continuous monitoring, decision, and signaling only.
+- `HUMAN_APPROVAL` requires explicit operator approval before ordinary writes.
+- `AUTO_BOUNDED` is bounded autonomous Spot execution through the direct API;
+  it does not bypass deterministic policy or fresh revalidation.
 - Telegram callbacks contain only opaque `approval_id` references.
 - Rejected, expired, stale, policy-failed, or unauthenticated paths perform no
   financial write.

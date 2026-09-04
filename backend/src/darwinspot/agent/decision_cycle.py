@@ -15,7 +15,9 @@ from darwinspot.binance.mapper import (
 )
 from darwinspot.config import get_settings
 from darwinspot.execution.budget import BudgetExceeded
+from darwinspot.execution.modes import ExecutionMode
 from darwinspot.execution.policy import evaluate_execution_policy
+from darwinspot.execution.universe import effective_symbols
 from darwinspot.observability import log_event
 from darwinspot.storage.repository import Repository
 
@@ -34,6 +36,10 @@ class DecisionCycle:
             return "EMERGENCY_STOP"
         if mandate is None or budget is None or policy is None:
             raise ValueError("mandate, structured policy, and budget must exist before a cycle")
+        try:
+            execution_mode = ExecutionMode(config.mode)
+        except ValueError as exc:
+            raise ValueError("agent configuration has an unsupported execution mode") from exc
 
         from darwinspot.agent.cycle import reconcile_open_intents
 
@@ -49,10 +55,42 @@ class DecisionCycle:
         market_universe = map_spot_market_universe(
             await client.call_tool(catalog.arguments("market_universe", {}))
         )
-        available_pairs = {item["symbol"] for item in market_universe}
+        configured_symbols = repo.supported_symbols()
+        universe = effective_symbols(configured_symbols, policy.allowed_symbols, market_universe)
+        eligible_market = [
+            item for item in market_universe if item["symbol"] in universe.eligible
+        ]
+        valid_symbols = set(universe.eligible)
+        for item in eligible_market:
+            symbol = str(item["symbol"])
+            try:
+                filters_for_symbol = map_symbol_filters(
+                    await client.call_tool(catalog.arguments("symbol_filters", {"symbol": symbol}))
+                )
+            except (ValueError, TypeError):
+                valid_symbols.discard(symbol)
+                continue
+            if filters_for_symbol.quote_asset != "USDT":
+                valid_symbols.discard(symbol)
+        eligible_symbols = frozenset(valid_symbols)
+        eligible_market = [item for item in eligible_market if item["symbol"] in eligible_symbols]
+        if not eligible_market:
+            repo.record_audit_event(
+                trigger="DECISION_NO_EFFECTIVE_SYMBOLS",
+                state="NO_EFFECTIVE_SYMBOLS",
+                model=get_settings().openai_model,
+                evidence={
+                    "configuredSymbols": list(configured_symbols),
+                    "mandateAllowedSymbols": sorted(policy.allowed_symbols),
+                    "invalidConfiguredSymbols": sorted(universe.invalid_configured),
+                },
+            )
+            log_event("DECISION_NO_EFFECTIVE_SYMBOLS", run_id=run_id)
+            return "NO_EFFECTIVE_SYMBOLS"
         selection = await runtime.choose_pair(
             {
-                "market_universe": market_universe,
+                "market_universe": eligible_market,
+                "effective_symbols": sorted(eligible_symbols),
                 "mandate": {
                     "assets": mandate.assets,
                     "entry_rules": mandate.entry_rules,
@@ -71,8 +109,19 @@ class DecisionCycle:
             }
         )
         pair = selection.pair
-        if pair not in available_pairs:
-            raise ValueError("DARWIN selected a pair outside the live market universe")
+        if pair not in eligible_symbols:
+            repo.record_audit_event(
+                trigger="DECISION_POLICY_REJECTED",
+                state="POLICY_REJECTED",
+                model=get_settings().openai_model,
+                evidence={"reason": "pair outside effective universe", "pair": pair},
+            )
+            log_event(
+                "DECISION_POLICY_REJECTED",
+                run_id=run_id,
+                reason="pair outside effective universe",
+            )
+            return "POLICY_REJECTED"
 
         observed_at = datetime.now(UTC)
         market = map_mcp_result(
@@ -148,9 +197,6 @@ class DecisionCycle:
         repo.record_decision(run_id, decision.model_dump(mode="json"), evidence)
         if decision.action == "HOLD":
             return "HOLD"
-        if config.mode == "READ_ONLY":
-            return "READ_ONLY"
-
         evaluation = evaluate_execution_policy(
             policy,
             decision=decision,
@@ -161,6 +207,7 @@ class DecisionCycle:
             budget=budget,
             emergency_stop=config.emergency_stop,
             actionable_intent_count=repo.actionable_intent_count(),
+            eligible_symbols=eligible_symbols,
         )
         policy_evidence = {
             "mandate_result": evaluation.mandate_result,
@@ -192,21 +239,37 @@ class DecisionCycle:
             return "SIGNAL_SUPPRESSED"
         operator_user_id = str(settings.telegram_operator_user_id or "WEB_OWNER")
         operator_chat_id = str(settings.telegram_operator_chat_id or "WEB_OWNER")
+        approval_id: str | None = None
         try:
-            _, approval = repo.create_waiting_intent(
-                run_id=run_id,
-                decision=decision.model_dump(mode="json"),
-                evaluation=evaluation,
-                policy_evidence=policy_evidence,
-                operator_user_id=operator_user_id,
-                operator_chat_id=operator_chat_id,
-                ttl_seconds=settings.approval_ttl_seconds,
-                signal_since=signal_since,
-            )
+            if execution_mode == ExecutionMode.HUMAN_APPROVAL:
+                _, approval = repo.create_waiting_intent(
+                    run_id=run_id,
+                    decision=decision.model_dump(mode="json"),
+                    evaluation=evaluation,
+                    policy_evidence=policy_evidence,
+                    operator_user_id=operator_user_id,
+                    operator_chat_id=operator_chat_id,
+                    ttl_seconds=settings.approval_ttl_seconds,
+                    signal_since=signal_since,
+                )
+                approval_id = approval.approval_id
+            else:
+                repo.create_auto_intent(
+                    run_id=run_id,
+                    decision=decision.model_dump(mode="json"),
+                    evaluation=evaluation,
+                    policy_evidence=policy_evidence,
+                    signal_since=signal_since,
+                )
         except BudgetExceeded as exc:
             log_event("DECISION_POLICY_REJECTED", run_id=run_id, reason=str(exc))
             return "POLICY_REJECTED"
-        log_event(
-            "TRADE_INTENT_WAITING_FOR_APPROVAL", run_id=run_id, approval_id=approval.approval_id
-        )
-        return "WAITING_FOR_APPROVAL"
+        if execution_mode == ExecutionMode.HUMAN_APPROVAL:
+            log_event(
+                "TRADE_INTENT_WAITING_FOR_APPROVAL",
+                run_id=run_id,
+                approval_id=approval_id,
+            )
+            return "WAITING_FOR_APPROVAL"
+        log_event("TRADE_INTENT_AUTO_AUTHORIZED", run_id=run_id)
+        return "AUTO_AUTHORIZED"

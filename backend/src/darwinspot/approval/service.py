@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from darwinspot.domain import new_idempotency_key, now_utc
+from darwinspot.execution.modes import AuthorizationSource
 from darwinspot.notifications.outbox import (
     EXECUTION_KIND,
     RESULT_KIND,
@@ -144,6 +145,8 @@ class TradeIntentApprovalService:
         intent.local_state = "APPROVED" if decision == "APPROVE" else "REJECTED"
         intent.updated_at = now
         if decision == "APPROVE":
+            intent.authorization_source = source
+            intent.authorized_at = now
             enqueue_unique(
                 self.db,
                 kind=EXECUTION_KIND,
@@ -243,6 +246,44 @@ class TradeIntentApprovalService:
             raise ApprovalError("approval cannot be consumed from its current state")
         approval.status = "CONSUMED"
         approval.updated_at = now_utc()
+        intent.local_state = intent_state
+        intent.updated_at = now_utc()
+        enqueue_unique(
+            self.db,
+            kind=RESULT_KIND,
+            aggregate_id=intent.id,
+            payload={"intent_id": intent.id, "result": intent_state, "reason": reason[:512]},
+            dedupe_key=f"telegram-result:{intent.id}:{intent_state}",
+        )
+        self.db.commit()
+
+    def claim_auto_for_execution(self, intent_id: str) -> TradeIntent:
+        intent = self.db.scalar(
+            select(TradeIntent).where(TradeIntent.id == intent_id).with_for_update()
+        )
+        if intent is None:
+            raise ApprovalError("trade intent not found")
+        if intent.execution_mode != "AUTO_BOUNDED":
+            raise ApprovalError("trade intent is not autonomous")
+        if intent.authorization_source != AuthorizationSource.AUTO_POLICY:
+            raise ApprovalError("autonomous intent has no AUTO_POLICY authorization")
+        if intent.local_state == "AUTO_AUTHORIZED":
+            intent.local_state = "REVALIDATING"
+            intent.updated_at = now_utc()
+            self.db.commit()
+            return intent
+        if intent.local_state in {"REVALIDATING", "SUBMITTING", "SUBMISSION_UNKNOWN"}:
+            return intent
+        raise ApprovalError("autonomous intent is not available for execution")
+
+    def complete_auto(self, intent_id: str, *, intent_state: str, reason: str) -> None:
+        intent = self.db.scalar(
+            select(TradeIntent).where(TradeIntent.id == intent_id).with_for_update()
+        )
+        if intent is None:
+            raise ApprovalError("trade intent not found")
+        if intent.execution_mode != "AUTO_BOUNDED":
+            raise ApprovalError("trade intent is not autonomous")
         intent.local_state = intent_state
         intent.updated_at = now_utc()
         enqueue_unique(

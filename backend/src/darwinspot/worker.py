@@ -97,15 +97,26 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
         if row.kind == PROPOSAL_KIND:
             intent = db.get(TradeIntent, data.get("intent_id"))
             approval = db.get(TradeIntentApproval, data.get("approval_id"))
-            if intent is None or approval is None:
+            if intent is None or (intent.execution_mode == "HUMAN_APPROVAL" and approval is None):
                 mark_skipped(
                     db, message_id=row.id, worker_id=worker_id, reason="approval aggregate missing"
                 )
                 return
             notifier = TelegramNotifier(settings)
-            delivery = await notifier.send_proposal(intent, approval)
-            approval.telegram_chat_id = delivery.chat_id
-            approval.telegram_message_id = delivery.message_id
+            if intent.execution_mode == "AUTO_BOUNDED":
+                delivery = await notifier.send_auto_signal(intent)
+            else:
+                if approval is None:
+                    mark_skipped(
+                        db,
+                        message_id=row.id,
+                        worker_id=worker_id,
+                        reason="human approval aggregate missing",
+                    )
+                    return
+                delivery = await notifier.send_proposal(intent, approval)
+                approval.telegram_chat_id = delivery.chat_id
+                approval.telegram_message_id = delivery.message_id
             db.commit()
             mark_sent(db, message_id=row.id, worker_id=worker_id)
             return
@@ -123,15 +134,22 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
             return
         if row.kind == EXECUTION_KIND:
             approval_id = data.get("approval_id")
-            if not isinstance(approval_id, str):
+            intent_id = data.get("intent_id")
+            if not isinstance(approval_id, str) and not isinstance(intent_id, str):
                 mark_skipped(
-                    db, message_id=row.id, worker_id=worker_id, reason="approval reference missing"
+                    db,
+                    message_id=row.id,
+                    worker_id=worker_id,
+                    reason="execution reference missing",
                 )
                 return
-            client = build_binance_client(settings, Repository(db).current_connection())
+            intent = db.get(TradeIntent, intent_id)
+            mode = intent.execution_mode if intent is not None else "HUMAN_APPROVAL"
+            client = build_binance_client(settings, Repository(db).current_connection(), mode=mode)
             try:
                 result = await ApprovedExecution(Repository(db), client).execute_claimed(
-                    approval_id
+                    approval_id=approval_id if isinstance(approval_id, str) else None,
+                    intent_id=intent_id if isinstance(intent_id, str) else None,
                 )
             finally:
                 transport = getattr(client, "transport", None)
@@ -156,7 +174,9 @@ async def _process_outbox_message(db: Any, row: Any, settings: Settings, worker_
                     db, message_id=row.id, worker_id=worker_id, reason="emergency target is invalid"
                 )
                 return
-            client = build_binance_client(settings, Repository(db).current_connection())
+            intent = db.get(TradeIntent, intent_id)
+            mode = intent.execution_mode if intent is not None else "HUMAN_APPROVAL"
+            client = build_binance_client(settings, Repository(db).current_connection(), mode=mode)
             try:
                 result = await ApprovedExecution(Repository(db), client).cancel_for_emergency_stop(
                     intent_id, operator_action_id
@@ -213,7 +233,7 @@ async def run_worker() -> None:
                 connection = repo.current_connection()
                 client: Any = None
                 try:
-                    client = build_binance_client(settings, connection)
+                    client = build_binance_client(settings, connection, mode=config.mode)
                     result = await asyncio.wait_for(
                         run_cycle(
                             repo,

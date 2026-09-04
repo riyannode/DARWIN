@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-5.4-mini"
     openai_base_url: str | None = None
     binance_agent_os_mcp_url: str = "https://agent.binance.com/mcp/agentic"
+    binance_api_key: str | None = None
+    binance_api_secret: str | None = None
+    binance_spot_api_base_url: str = "https://api.binance.com"
+    binance_account_lock_key: str = "darwinspot-binance-account"
+    binance_recv_window_ms: int = Field(default=5000, ge=1000, le=60000)
     token_encryption_key: str | None = None
     owner_password_hash: str | None = None
     frontend_origin: str = "http://localhost:3000"

@@ -74,9 +74,30 @@ def binance_status(
     _: object = Depends(current_owner), db: Session = Depends(get_db)
 ) -> dict[str, object]:
     settings = get_settings()
+    if Repository(db).get_or_create_agent().mode == "AUTO_BOUNDED":
+        return {
+            "state": "READY"
+            if settings.binance_api_key and settings.binance_api_secret
+            else "NOT_CONFIGURED",
+            "transport": "BINANCE_SPOT_API",
+            "accountReference": None,
+            "capabilities": [],
+        }
     if settings.binance_agent_os_transport == "codex":
         return {"state": "AUTH_REQUIRED", "accountReference": None, "capabilities": []}
     return Repository(db).redact_connection(Repository(db).current_connection())
+
+
+@router.get("/api/integrations/binance-api/status")
+def binance_api_status(_: object = Depends(current_owner)) -> dict[str, object]:
+    settings = get_settings()
+    configured = bool(settings.binance_api_key and settings.binance_api_secret)
+    return {
+        "transport": "BINANCE_SPOT_API",
+        "state": "READY" if configured else "NOT_CONFIGURED",
+        "configured": configured,
+        "liveVerification": "UNVERIFIED",
+    }
 
 
 @router.post("/api/integrations/binance/connect")
@@ -408,6 +429,10 @@ def activity(
                 "notificationState": (
                     deliveries[intent.id].status if intent.id in deliveries else "NOT_CREATED"
                 ),
+                "executionMode": intent.execution_mode,
+                "executionTransport": intent.execution_transport,
+                "authorizationSource": intent.authorization_source,
+                "authorizedAt": intent.authorized_at,
             }
             for intent in intents
         ]
@@ -496,6 +521,10 @@ def activity_detail(
                 else None
             ),
             "notificationState": delivery.status if delivery is not None else "NOT_CREATED",
+            "executionMode": intent.execution_mode,
+            "executionTransport": intent.execution_transport,
+            "authorizationSource": intent.authorization_source,
+            "authorizedAt": intent.authorized_at,
             "rationale": intent.rationale,
             "supportingFactors": json.loads(intent.supporting_factors),
             "riskFactors": json.loads(intent.risk_factors),

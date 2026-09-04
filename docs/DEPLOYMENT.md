@@ -34,6 +34,11 @@ BINANCE_AGENT_OS_TRANSPORT=codex
 CODEX_APP_SERVER_COMMAND=codex app-server --stdio
 CODEX_APP_SERVER_VERSION=0.153.0
 CODEX_WRITE_CONFIRMATION_VERIFIED=false
+BINANCE_API_KEY
+BINANCE_API_SECRET
+BINANCE_SPOT_API_BASE_URL=https://api.binance.com
+BINANCE_ACCOUNT_LOCK_KEY=darwinspot-binance-account
+BINANCE_RECV_WINDOW_MS=5000
 APPROVAL_TTL_SECONDS=90
 TELEGRAM_BOT_TOKEN
 TELEGRAM_OPERATOR_CHAT_ID
@@ -57,14 +62,17 @@ must produce `AUTH_REQUIRED`/`NOT_AUTHENTICATED` and no write.
 7. Verify `/health/live` and `/health/ready`.
 8. Verify owner login, Codex status, Telegram configuration state, and durable
    activity state.
-9. Keep DARWIN in `READ_ONLY` until mandate, structured policy, budget, Telegram,
-   and manual transport verification are deliberately complete.
+9. Keep DARWIN in `HUMAN_APPROVAL` until mandate, structured policy, budget,
+   Telegram, and manual Codex transport verification are deliberately complete.
+   Enable `AUTO_BOUNDED` only with a dedicated Spot-trading-only Binance API key,
+   withdrawals disabled, and IP restrictions where available.
 
 ## Runtime guarantees
 
 - DARWIN performs autonomous monitoring, analysis, and BUY/SELL/HOLD decisions.
-- Every ordinary BUY/SELL write requires a durable explicit operator approval.
-- Telegram approval triggers fresh revalidation, not stale submission.
+- HUMAN_APPROVAL ordinary BUY/SELL writes require durable explicit operator approval.
+- AUTO_BOUNDED ordinary BUY/SELL writes require AUTO_POLICY authorization and
+  the same fresh deterministic revalidation, not stale submission.
 - Policy admission is atomic and respects max-open intent limits.
 - One Binance account cannot perform concurrent ordinary financial writes.
 - `SUBMISSION_UNKNOWN` reconciles before retry.

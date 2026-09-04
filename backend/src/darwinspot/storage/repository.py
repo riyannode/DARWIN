@@ -18,8 +18,14 @@ from darwinspot.execution.budget import (
     OpenBuyCommitment,
     calculate_budget,
 )
+from darwinspot.execution.modes import ExecutionMode, ExecutionTransport
 from darwinspot.execution.orders import SubmissionBlocked
 from darwinspot.execution.policy import ExecutionPolicy, PolicyEvaluation
+from darwinspot.execution.universe import (
+    DEFAULT_SUPPORTED_SYMBOLS,
+    parse_supported_symbols,
+    validate_supported_symbols,
+)
 from darwinspot.notifications.outbox import PROPOSAL_KIND, enqueue_unique
 from darwinspot.observability import log_event
 from darwinspot.security.sessions import hash_session_token
@@ -43,7 +49,12 @@ class Repository:
     def get_or_create_agent(self) -> AgentConfig:
         config = self.db.scalar(select(AgentConfig).limit(1))
         if config is None:
-            config = AgentConfig(id=new_idempotency_key(), state=AgentState.DISCONNECTED)
+            config = AgentConfig(
+                id=new_idempotency_key(),
+                state=AgentState.DISCONNECTED,
+                mode=ExecutionMode.HUMAN_APPROVAL,
+                supported_symbols=json.dumps(DEFAULT_SUPPORTED_SYMBOLS),
+            )
             self.db.add(config)
             self.db.commit()
         return config
@@ -87,6 +98,7 @@ class Repository:
         mandate = self.current_mandate()
         if mandate is None:
             return None
+        configured_symbols = parse_supported_symbols(self.get_or_create_agent().supported_symbols)
         try:
             symbols = json.loads(mandate.allowed_symbols)
         except json.JSONDecodeError as exc:
@@ -100,7 +112,20 @@ class Repository:
             allowed_symbols=frozenset(cast(list[str], symbol_values)),
             max_order_notional=Decimal(str(mandate.max_order_notional)),
             max_open_actionable_intents=mandate.max_open_actionable_intents,
+            configured_symbols=frozenset(configured_symbols),
         )
+
+    def supported_symbols(self) -> tuple[str, ...]:
+        return parse_supported_symbols(self.get_or_create_agent().supported_symbols)
+
+    def save_supported_symbols(self, values: list[str]) -> tuple[str, ...]:
+        symbols = validate_supported_symbols(values)
+        config = self.db.scalar(select(AgentConfig).with_for_update().limit(1))
+        if config is None:
+            config = self.get_or_create_agent()
+        config.supported_symbols = json.dumps(symbols)
+        self.db.commit()
+        return symbols
 
     def latest_run(self) -> AgentRun | None:
         return self.db.scalar(select(AgentRun).order_by(AgentRun.started_at.desc()).limit(1))
@@ -129,11 +154,14 @@ class Repository:
         commitments: list[OpenBuyCommitment] = []
         for intent in intents:
             if intent.local_state not in {
+                "AUTO_AUTHORIZED",
                 "OPEN",
                 "PARTIALLY_FILLED",
                 "SUBMITTING",
                 "SUBMISSION_UNKNOWN",
                 "CANCEL_PENDING",
+                "REVALIDATING",
+                "WAITING_FOR_EXECUTION_CONFIRMATION",
             }:
                 continue
             reserved = intent.committed_notional or intent.quote_notional or Decimal("0")
@@ -388,6 +416,14 @@ class Repository:
         allowed_symbols = fields["allowed_symbols"]
         if not isinstance(allowed_symbols, list):
             raise ValueError("allowed_symbols must be a list")
+        allowed_values = cast(list[Any], allowed_symbols)
+        if not all(isinstance(symbol, str) for symbol in allowed_values):
+            raise ValueError("mandate allowed_symbols must contain strings")
+        configured_symbols = set(self.supported_symbols())
+        if not set(cast(list[str], allowed_values)).issubset(configured_symbols):
+            raise ValueError(
+                "mandate allowed_symbols must be within the configured trading universe"
+            )
         version = MandateVersion(
             id=version_id,
             assets=fields["assets"],
@@ -479,6 +515,10 @@ class Repository:
         risk_factors: list[str] | None = None,
         confidence: Decimal = Decimal("0"),
         policy_evidence: dict[str, Any] | None = None,
+        execution_mode: str = ExecutionMode.HUMAN_APPROVAL,
+        execution_transport: str = ExecutionTransport.CODEX_AGENT_OS_MCP,
+        authorization_source: str | None = None,
+        authorized_at: datetime | None = None,
     ) -> TradeIntent:
         if not quantity.is_finite() or quantity <= Decimal("0"):
             raise ValueError("order quantity must be finite and positive")
@@ -528,6 +568,10 @@ class Repository:
             risk_factors=json.dumps(risk_factors or [], sort_keys=True),
             confidence=confidence,
             policy_evidence=json.dumps(policy_evidence or {}, default=str, sort_keys=True),
+            execution_mode=execution_mode,
+            execution_transport=execution_transport,
+            authorization_source=authorization_source,
+            authorized_at=authorized_at,
             created_at=now,
             updated_at=now,
         )
@@ -548,6 +592,7 @@ class Repository:
                 [
                     "WAITING_FOR_APPROVAL",
                     "APPROVED",
+                    "AUTO_AUTHORIZED",
                     "REVALIDATING",
                     "WAITING_FOR_EXECUTION_CONFIRMATION",
                     "SUBMITTING",
@@ -574,6 +619,7 @@ class Repository:
                         [
                             "WAITING_FOR_APPROVAL",
                             "APPROVED",
+                            "AUTO_AUTHORIZED",
                             "REVALIDATING",
                             "WAITING_FOR_EXECUTION_CONFIRMATION",
                             "SUBMITTING",
@@ -635,6 +681,8 @@ class Repository:
             risk_factors=json.dumps(decision.get("risk_factors", []), sort_keys=True),
             confidence=Decimal(str(decision.get("confidence", "0"))),
             policy_evidence=json.dumps(policy_evidence, default=str, sort_keys=True),
+            execution_mode=ExecutionMode.HUMAN_APPROVAL,
+            execution_transport=ExecutionTransport.CODEX_AGENT_OS_MCP,
             created_at=now,
             updated_at=now,
         )
@@ -660,6 +708,82 @@ class Repository:
         self.db.commit()
         log_event("ORDER_INTENT_PROPOSED", intent_id=intent.id, pair=intent.pair, side=intent.side)
         return intent, approval
+
+    def create_auto_intent(
+        self,
+        *,
+        run_id: str,
+        decision: dict[str, Any],
+        evaluation: PolicyEvaluation,
+        policy_evidence: dict[str, Any],
+        signal_since: datetime | None = None,
+    ) -> TradeIntent:
+        config = self.db.scalar(select(AgentConfig).with_for_update().limit(1))
+        policy = self.current_policy()
+        if config is None or policy is None:
+            raise ValueError("agent policy is required before creating an intent")
+        if config.mode != ExecutionMode.AUTO_BOUNDED:
+            raise ValueError("auto intent requires AUTO_BOUNDED mode")
+        if self.actionable_intent_count() >= policy.max_open_actionable_intents:
+            raise BudgetExceeded("max_open_actionable_intents reached")
+        if signal_since is not None and self.recent_actionable_signal_exists(
+            pair=str(decision["pair"]),
+            side=str(decision.get("side") or decision["action"]),
+            since=signal_since,
+        ):
+            raise BudgetExceeded("signal cooldown is active for this pair and side")
+        quantity = Decimal(str(decision["quantity"]))
+        price = Decimal(str(decision["price"])) if decision.get("price") is not None else None
+        side = str(decision.get("side") or decision["action"])
+        now = now_utc()
+        intent = TradeIntent(
+            id=new_idempotency_key(),
+            idempotency_key=new_idempotency_key(),
+            agent_run_id=run_id,
+            pair=str(decision["pair"]),
+            side=side,
+            order_type=str(decision.get("order_type") or "MARKET"),
+            quantity=quantity,
+            quote_notional=evaluation.computed_notional if side == "BUY" else None,
+            price=price,
+            budget_result=evaluation.budget_result,
+            committed_notional=evaluation.computed_notional if side == "BUY" else None,
+            local_state="AUTO_AUTHORIZED",
+            rationale=str(decision.get("rationale", ""))[:2000],
+            supporting_factors=json.dumps(decision.get("supporting_factors", []), sort_keys=True),
+            risk_factors=json.dumps(decision.get("risk_factors", []), sort_keys=True),
+            confidence=Decimal(str(decision.get("confidence", "0"))),
+            policy_evidence=json.dumps(policy_evidence, default=str, sort_keys=True),
+            execution_mode=ExecutionMode.AUTO_BOUNDED,
+            execution_transport=ExecutionTransport.BINANCE_SPOT_API,
+            authorization_source="AUTO_POLICY",
+            authorized_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        self.db.add(intent)
+        enqueue_unique(
+            self.db,
+            kind=PROPOSAL_KIND,
+            aggregate_id=intent.id,
+            payload={"intent_id": intent.id, "mode": ExecutionMode.AUTO_BOUNDED},
+            dedupe_key=f"telegram-auto-signal:{intent.id}",
+        )
+        enqueue_unique(
+            self.db,
+            kind="EXECUTE_APPROVED_INTENT",
+            aggregate_id=intent.id,
+            payload={"intent_id": intent.id, "mode": ExecutionMode.AUTO_BOUNDED},
+            dedupe_key=f"execute-auto:{intent.id}",
+        )
+        self.db.commit()
+        log_event(
+            "ORDER_INTENT_AUTO_AUTHORIZED",
+            intent_id=intent.id,
+            pair=intent.pair,
+            side=intent.side,
+        )
+        return intent
 
     def reserve_intent(self, intent: TradeIntent) -> None:
         """Atomically reserve a proposed buy before an external submission."""

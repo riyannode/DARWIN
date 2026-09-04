@@ -7,11 +7,13 @@
 
 ## 1. Goal and non-goals
 
-DARWIN becomes a continuously scheduled Binance market/account monitoring and
-decision agent. It autonomously collects live evidence, selects BUY/SELL/HOLD,
-checks deterministic policy, creates durable proposals, and signals the operator
-through Telegram. DARWIN never autonomously submits an order, cancellation, or
-transfer.
+DARWIN becomes a continuously scheduled Binance Spot market/account monitoring
+and decision agent with two explicit execution modes. It autonomously collects
+live evidence, selects BUY/SELL/HOLD, checks deterministic policy, creates
+durable intents, and signals the operator through Telegram. HUMAN_APPROVAL
+requires operator approval through Codex; AUTO_BOUNDED may submit through the
+narrow direct Spot API after the same deterministic revalidation. Neither mode
+supports transfers or withdrawals.
 
 The ordinary path is:
 
@@ -59,7 +61,8 @@ Fresh `origin/main` already contains:
 
 Fresh main does not contain Telegram integration, a durable approval table, an
 outbox, an account-scoped financial-write lease, or a Codex App Server bridge.
-`AUTO_BOUNDED` currently allows an automatic write and must be changed.
+`AUTO_BOUNDED` is the direct Spot API mode; it must share the human mode's
+decision, policy, lock, revalidation, reconciliation, and audit seams.
 
 Current non-read paths are `submit_order` and `cancel_order`. No internal
 transfer/withdrawal route exists; transfers and withdrawals are forbidden by
@@ -109,6 +112,12 @@ only:
 - `allowed_symbols`: exact uppercase symbols;
 - `max_order_notional`: positive decimal in USDT quote units;
 - `max_open_actionable_intents`: positive integer.
+
+`AgentConfig.supported_symbols` is the persisted configured Spot/USDT universe,
+bootstrapped to `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, and `SOLUSDT`. Effective symbols
+are the configured universe intersected with mandate `allowed_symbols` and
+currently valid Binance Spot metadata. Owner settings may add/remove symbols;
+this never mutates historical mandates.
 
 Before an actionable intent is created, the backend checks exact symbol
 membership, computed notional, outstanding actionable intent count, rolling buy
@@ -327,9 +336,10 @@ operator-command cancellation path. It:
 The model cannot trigger this branch. The direct unapproved web cancel endpoint
 is disabled. Autonomous CANCEL and CANCEL_REPLACE are disabled. Transfers,
 withdrawals, and any other non-spot capability remain unsupported and fail
-closed. Every ordinary Binance write requires the durable approval state machine;
-the emergency-stop operator command is the explicit approval for its special
-cancellation work.
+closed. HUMAN_APPROVAL ordinary writes require the durable approval state machine;
+AUTO_BOUNDED ordinary writes require durable AUTO_POLICY authorization and the
+same coordinator. The emergency-stop operator command is the explicit approval
+for its special cancellation work.
 
 ## 10. Worker and retry behavior
 
@@ -411,7 +421,8 @@ belong under an ignored `.local-tests/` directory.
 
 1. The LLM never authorizes financial execution.
 2. Telegram APPROVE authorizes revalidation, not stale submission.
-3. Every ordinary Binance write requires durable operator approval.
+3. HUMAN_APPROVAL ordinary writes require durable operator approval; AUTO_BOUNDED
+   writes require durable AUTO_POLICY authorization.
 4. Emergency cancellation is the only special operator-command write path.
 5. One approval can cause at most one financial submission attempt.
 6. One Binance account cannot perform concurrent ordinary financial writes.
@@ -421,6 +432,7 @@ belong under an ignored `.local-tests/` directory.
 10. `SUBMISSION_UNKNOWN` always reconciles before any retry.
 11. Transfer/withdrawal remains unsupported and fail-closed.
 12. Codex owns transport/auth only; DARWIN owns decisions and policy.
+13. AUTO_BOUNDED has no `TradeIntentApproval` row and uses `AUTO_POLICY`.
 
 ## 13. Verification gates
 

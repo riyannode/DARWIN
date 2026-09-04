@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from darwinspot.agent.cycle import CycleUnavailable, run_cycle
@@ -20,18 +20,22 @@ from darwinspot.api.auth import (
 from darwinspot.binance.client import (
     AgentOSAuthInvalid,
     AgentOSUnavailable,
+    ToolCatalog,
 )
 from darwinspot.binance.codex_transport import CodexTransportError
 from darwinspot.binance.factory import build_binance_client
+from darwinspot.binance.mapper import map_spot_market_universe, map_symbol_filters
 from darwinspot.config import get_settings
 from darwinspot.domain import AgentState
+from darwinspot.execution.modes import ExecutionMode
+from darwinspot.execution.universe import validate_supported_symbols
 from darwinspot.observability import log_event
 from darwinspot.storage.database import get_db
 from darwinspot.storage.models import OwnerSession
 from darwinspot.storage.repository import Repository
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
-Mode = Literal["READ_ONLY", "APPROVAL_REQUIRED", "AUTO_BOUNDED"]
+Mode = Literal["HUMAN_APPROVAL", "AUTO_BOUNDED"]
 
 
 class ModeInput(BaseModel):
@@ -40,12 +44,24 @@ class ModeInput(BaseModel):
     mode: Mode
 
 
+class UniverseInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    supported_symbols: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("supported_symbols")
+    @classmethod
+    def validate_symbols(cls, values: list[str]) -> list[str]:
+        return list(validate_supported_symbols(values))
+
+
 def _agent_payload(repo: Repository) -> dict[str, object]:
     config = repo.get_or_create_agent()
     mandate = repo.current_mandate()
     latest = repo.latest_run()
     return {
         "mode": config.mode,
+        "supportedSymbols": list(repo.supported_symbols()),
         "state": config.state,
         "nextRunAt": config.next_run_at,
         "emergencyStop": config.emergency_stop,
@@ -89,8 +105,69 @@ def put_mandate(
     request: MandateInput, _: object = Depends(mutation_owner), db: Session = Depends(get_db)
 ) -> dict[str, object]:
     repo = Repository(db)
-    mandate = repo.save_mandate(request.model_dump())
+    try:
+        mandate = repo.save_mandate(request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"version": mandate.id, "createdAt": mandate.created_at}
+
+
+@router.put("/universe")
+async def put_universe(
+    request: UniverseInput, _: object = Depends(mutation_owner), db: Session = Depends(get_db)
+) -> dict[str, object]:
+    repo = Repository(db)
+    config = repo.get_or_create_agent()
+    settings = get_settings()
+    connection = repo.current_connection()
+    existing_symbols = set(repo.supported_symbols())
+    additions = [symbol for symbol in request.supported_symbols if symbol not in existing_symbols]
+    client = None
+    try:
+        if additions:
+            try:
+                client = build_binance_client(settings, connection, mode=config.mode)
+            except AgentOSUnavailable as exc:
+                raise HTTPException(
+                    status_code=503, detail="selected Binance transport is unavailable"
+                ) from exc
+            catalog = ToolCatalog(await client.discover_tools())
+            market_universe = map_spot_market_universe(
+                await client.call_tool(catalog.arguments("market_universe", {}))
+            )
+            live = {str(item["symbol"]): item for item in market_universe}
+            for symbol in additions:
+                if live.get(symbol) is None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"{symbol} is not a currently trading Binance Spot/USDT symbol",
+                    )
+                filters = map_symbol_filters(
+                    await client.call_tool(
+                        catalog.arguments("symbol_filters", {"symbol": symbol})
+                    )
+                )
+                if filters.symbol != symbol or filters.quote_asset != "USDT":
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"{symbol} does not expose valid Binance Spot/USDT filters",
+                    )
+        saved = repo.save_supported_symbols(request.supported_symbols)
+    except (AgentOSUnavailable, CodexTransportError) as exc:
+        raise HTTPException(
+            status_code=503, detail="selected Binance transport is unavailable"
+        ) from exc
+    finally:
+        transport = getattr(client, "transport", None)
+        if transport is not None:
+            await transport.close()
+    repo.record_audit_event(
+        trigger="SUPPORTED_SYMBOLS_CHANGED",
+        state="SUPPORTED_SYMBOLS_CHANGED",
+        model=settings.openai_model,
+        evidence={"supportedSymbols": list(saved)},
+    )
+    return {"supportedSymbols": list(saved)}
 
 
 @router.put("/mode")
@@ -99,16 +176,23 @@ def put_mode(
 ) -> dict[str, str]:
     repo = Repository(db)
     config = repo.get_or_create_agent()
-    if request.mode == "AUTO_BOUNDED" and repo.current_mandate() is None:
+    if request.mode == ExecutionMode.AUTO_BOUNDED and repo.current_mandate() is None:
         raise HTTPException(
             status_code=409, detail="complete all four mandate sections before activation"
         )
-    if request.mode == "AUTO_BOUNDED" and repo.current_budget() is None:
+    if request.mode == ExecutionMode.AUTO_BOUNDED and repo.current_budget() is None:
         raise HTTPException(
             status_code=409, detail="set the rolling 24-hour budget before activation"
         )
+    previous_mode = config.mode
     config.mode = request.mode
     db.commit()
+    repo.record_audit_event(
+        trigger="EXECUTION_MODE_CHANGED",
+        state=request.mode,
+        model=get_settings().openai_model,
+        evidence={"previousMode": previous_mode, "mode": request.mode},
+    )
     return {"mode": config.mode}
 
 
@@ -145,9 +229,14 @@ async def run_once(
 ) -> dict[str, str]:
     repo = Repository(db)
     settings = get_settings()
+    config = repo.get_or_create_agent()
     connection = repo.current_connection()
-    if settings.binance_agent_os_transport == "direct_oauth" and (
+    if (
+        config.mode == ExecutionMode.HUMAN_APPROVAL
+        and settings.binance_agent_os_transport == "direct_oauth"
+        and (
         connection is None or connection.state != "CONNECTED"
+        )
     ):
         raise HTTPException(status_code=409, detail="Binance Agent OS is not connected")
     if not settings.openai_api_key:
@@ -155,7 +244,7 @@ async def run_once(
     run = repo.start_run("RUN_ONCE", settings.openai_model)
     client = None
     try:
-        client = build_binance_client(settings, connection)
+        client = build_binance_client(settings, connection, mode=config.mode)
         result = await asyncio.wait_for(
             run_cycle(
                 repo,
