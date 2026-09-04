@@ -1,0 +1,379 @@
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime, timedelta
+from typing import Any, cast
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from darwinspot.config import get_settings
+from darwinspot.domain import now_utc
+from darwinspot.storage.database import get_db
+from darwinspot.storage.models import AgentRun, TradeIntent
+from darwinspot.storage.repository import Repository
+
+router = APIRouter(tags=["showcase"])
+_DECISION_TRIGGERS = ("SCHEDULED", "RUN_ONCE")
+_INTERVALS = ("15m", "1h", "4h")
+_CANDLE_FIELDS = (
+    "open_time",
+    "close_time",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "quote_volume",
+)
+_REASON_CODES = {
+    "max_order_notional exceeded": "MAX_ORDER_NOTIONAL",
+    "buy exceeds available budget": "BUDGET_EXCEEDED",
+    "max_open_actionable_intents reached": "MAX_CONCURRENT_TRADES",
+    "symbol is not in allowed_symbols": "SYMBOL_NOT_ALLOWED",
+    "symbol is not in configured trading universe": "SYMBOL_NOT_CONFIGURED",
+}
+
+
+def _object(value: Any) -> dict[str, Any]:
+    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
+
+
+def _list(value: Any) -> list[Any]:
+    return cast(list[Any], value) if isinstance(value, list) else []
+
+
+def _run_json(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return _object(parsed)
+
+
+def _json_value(value: str | None) -> Any:
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return None
+
+
+def _string_list(value: Any) -> list[str]:
+    return [item for item in _list(value) if isinstance(item, str)]
+
+
+def _safe_candle(value: Any) -> dict[str, str] | None:
+    candle = _object(value)
+    if not all(isinstance(candle.get(field), str) for field in _CANDLE_FIELDS):
+        return None
+    return {field: cast(str, candle[field]) for field in _CANDLE_FIELDS}
+
+
+def _safe_history(value: Any) -> dict[str, Any] | None:
+    history = _object(value)
+    if not isinstance(history.get("symbol"), str) or not isinstance(history.get("interval"), str):
+        return None
+    candles = [_safe_candle(item) for item in _list(history.get("candles"))]
+    if not candles or any(candle is None for candle in candles):
+        return None
+    result: dict[str, Any] = {
+        "symbol": history["symbol"],
+        "interval": history["interval"],
+        "candles": [candle for candle in candles if candle is not None],
+    }
+    if isinstance(history.get("observed_at"), str):
+        result["observed_at"] = history["observed_at"]
+    return result
+
+
+def _safe_history_map(value: Any, intervals: tuple[str, ...]) -> dict[str, Any]:
+    source = _object(value)
+    result: dict[str, Any] = {}
+    for interval in intervals:
+        history = _safe_history(source.get(interval))
+        if history is not None:
+            result[interval] = history
+    return result
+
+
+def _safe_market(value: Any) -> dict[str, str]:
+    market = _object(value)
+    result: dict[str, str] = {}
+    for field in ("symbol", "price", "timestamp", "observed_at"):
+        if isinstance(market.get(field), str):
+            result[field] = cast(str, market[field])
+    return result
+
+
+def _safe_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+    pair_selection = _object(evidence.get("pair_selection"))
+    final_decision = _object(evidence.get("final_decision"))
+    candidate_history: dict[str, Any] = {}
+    for symbol, value in _object(pair_selection.get("candidate_history")).items():
+        histories = _safe_history_map(value, ("15m", "1h"))
+        if histories:
+            candidate_history[symbol] = histories
+    candidate_failures = {
+        symbol: error
+        for symbol, error in _object(pair_selection.get("candidate_failures")).items()
+        if isinstance(error, str)
+    }
+    return {
+        "pairSelection": {
+            "selectedPair": (
+                pair_selection.get("selected_pair")
+                if isinstance(pair_selection.get("selected_pair"), str)
+                else None
+            ),
+            "candidateSymbols": _string_list(pair_selection.get("candidate_symbols")),
+            "effectiveSymbols": _string_list(pair_selection.get("effective_symbols")),
+            "candidateHistory": candidate_history,
+            "candidateFailures": candidate_failures,
+        },
+        "selectedPair": {
+            "selectedPair": (
+                final_decision.get("selected_pair")
+                if isinstance(final_decision.get("selected_pair"), str)
+                else None
+            ),
+            "market": _safe_market(final_decision.get("market")),
+            "marketHistory": _safe_history_map(
+                final_decision.get("market_history"), _INTERVALS
+            ),
+        },
+    }
+
+
+def _aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _evidence_timestamp(evidence: dict[str, Any]) -> datetime | None:
+    selected = _object(evidence.get("final_decision"))
+    market = _object(selected.get("market"))
+    raw = market.get("observed_at")
+    if isinstance(raw, str):
+        try:
+            return datetime.fromisoformat(raw).astimezone(UTC)
+        except ValueError:
+            pass
+    history = _safe_history_map(selected.get("market_history"), _INTERVALS)
+    for snapshot in history.values():
+        raw_observed = snapshot.get("observed_at")
+        if isinstance(raw_observed, str):
+            try:
+                return datetime.fromisoformat(raw_observed).astimezone(UTC)
+            except ValueError:
+                continue
+    return None
+
+
+def _policy(run: AgentRun, intent: TradeIntent | None, action: str | None) -> dict[str, Any]:
+    if action == "HOLD":
+        return {"result": "NOT_APPLICABLE", "reason": "HOLD does not create an execution policy"}
+    if run.result_state == "POLICY_REJECTED":
+        reason = "deterministic policy rejected the decision"
+        if intent is not None:
+            stored = _run_json(intent.policy_evidence)
+            reason = str(stored.get("reason") or reason)
+        return {
+            "result": "REJECTED",
+            "reason": reason,
+            "reasonCode": _REASON_CODES.get(reason, "POLICY_REJECTED"),
+        }
+    if intent is not None:
+        stored = _run_json(intent.policy_evidence)
+        checks = {
+            key: stored.get(key)
+            for key in (
+                "mandate_result",
+                "risk_result",
+                "budget_result",
+                "execution_policy_result",
+            )
+            if isinstance(stored.get(key), str)
+        }
+        reason = stored.get("reason")
+        if all(value == "PASS" for value in checks.values()) and len(checks) == 4:
+            result = "PASS"
+        else:
+            result = "REJECTED"
+        return {
+            "result": result,
+            "reason": reason if isinstance(reason, str) else None,
+            "reasonCode": _REASON_CODES.get(reason) if isinstance(reason, str) else None,
+            "checks": checks,
+        }
+    return {"result": "NOT_AVAILABLE", "reason": run.rationale}
+
+
+def _system_result(run: AgentRun, action: str | None) -> tuple[str, str | None]:
+    if run.result_state == "FAILED":
+        return "FAILED", run.rationale or "latest scheduled run failed"
+    if action == "HOLD":
+        return "SKIPPED", "NO_TRADE"
+    if run.result_state in {
+        "POLICY_REJECTED",
+        "SIGNAL_SUPPRESSED",
+        "NO_EFFECTIVE_SYMBOLS",
+        "EMERGENCY_STOP",
+        "FINANCIAL_WRITES_DISABLED",
+    }:
+        return "SKIPPED", (
+            "FINANCIAL_WRITES_DISABLED"
+            if run.result_state == "FINANCIAL_WRITES_DISABLED"
+            else run.result_state
+        )
+    if run.result_state in {"WAITING_FOR_APPROVAL", "AUTO_AUTHORIZED"}:
+        return "PENDING", run.result_state
+    return run.result_state, None
+
+
+def _decision(run: AgentRun) -> dict[str, Any]:
+    raw = _run_json(run.decision)
+    result: dict[str, Any] = {}
+    for field in (
+        "action",
+        "pair",
+        "order_type",
+        "side",
+        "quantity",
+        "price",
+        "rationale",
+        "confidence",
+    ):
+        value = raw.get(field)
+        if isinstance(value, (str, int, float)) or value is None:
+            result[field] = value
+    result["supporting_factors"] = _string_list(raw.get("supporting_factors"))
+    result["risk_factors"] = _string_list(raw.get("risk_factors"))
+    return result
+
+
+def _summary(
+    run: AgentRun,
+    intent: TradeIntent | None,
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    decision = _decision(run)
+    action = decision.get("action") if isinstance(decision.get("action"), str) else None
+    outcome, reason = _system_result(run, action)
+    return {
+        "id": run.id,
+        "trigger": run.trigger_type,
+        "model": run.model,
+        "state": run.result_state,
+        "startedAt": run.started_at,
+        "completedAt": run.completed_at,
+        "decision": decision,
+        "rationale": decision.get("rationale"),
+        "supportingFactors": decision["supporting_factors"],
+        "riskFactors": decision["risk_factors"],
+        "policy": _policy(run, intent, action),
+        "systemOutcome": outcome,
+        "reason": reason,
+        "evidence": evidence,
+    }
+
+
+def _freshness(
+    latest: AgentRun | None,
+    evidence_at: datetime | None,
+    agent_state: str,
+    next_run_at: datetime | None,
+    schedule_interval: int,
+) -> tuple[str, bool, str | None]:
+    if latest is None:
+        return "STALE", True, "NO_COMPLETED_DECISION"
+    if latest.result_state == "FAILED":
+        return "STALE", True, "LATEST_RUN_FAILED"
+    if evidence_at is None:
+        return "STALE", True, "NO_STORED_MARKET_EVIDENCE"
+    now = now_utc()
+    if now - evidence_at > timedelta(seconds=max(schedule_interval * 2, 600)):
+        return "STALE", True, "STORED_MARKET_EVIDENCE_IS_OLD"
+    aware_next = _aware(next_run_at)
+    if agent_state == "RUNNING" and aware_next is not None and aware_next < now:
+        return "STALE", True, "SCHEDULE_OVERDUE"
+    return "FRESH", False, None
+
+
+@router.get("/api/showcase")
+def showcase(db: Session = Depends(get_db)) -> dict[str, Any]:
+    settings = get_settings()
+    if (
+        not settings.public_showcase_enabled
+        or settings.demo_mode
+        or settings.financial_writes_enabled
+    ):
+        raise HTTPException(status_code=404, detail="public showcase is disabled")
+
+    repo = Repository(db)
+    config = repo.get_or_create_agent()
+    mandate = repo.current_mandate()
+    runs = list(
+        db.scalars(
+            select(AgentRun)
+            .where(
+                AgentRun.trigger_type.in_(_DECISION_TRIGGERS),
+                AgentRun.completed_at.is_not(None),
+            )
+            .order_by(AgentRun.started_at.desc())
+            .limit(20)
+        ).all()
+    )
+    latest = runs[0] if runs else None
+    intents = {
+        intent.agent_run_id: intent
+        for intent in db.scalars(
+            select(TradeIntent).where(TradeIntent.agent_run_id.in_([run.id for run in runs]))
+        ).all()
+    }
+    latest_evidence_raw = _run_json(latest.evidence_timestamps) if latest is not None else {}
+    latest_evidence = _safe_evidence(latest_evidence_raw)
+    latest_intent = intents.get(latest.id) if latest is not None else None
+    last_evidence_at = _evidence_timestamp(latest_evidence_raw) if latest is not None else None
+    freshness, stale, stale_reason = _freshness(
+        latest,
+        last_evidence_at,
+        config.state,
+        config.next_run_at,
+        config.schedule_interval,
+    )
+    allowed_symbols: list[str] = []
+    if mandate is not None:
+        allowed_symbols = _string_list(_json_value(mandate.allowed_symbols))
+    latest_summary = (
+        _summary(latest, latest_intent, latest_evidence) if latest is not None else None
+    )
+    recent = [
+        _summary(run, intents.get(run.id), _safe_evidence(_run_json(run.evidence_timestamps)))
+        for run in runs
+    ]
+    state = "AVAILABLE" if latest is not None and not stale else "STALE"
+    return {
+        "showcaseState": state,
+        "demoMode": settings.demo_mode,
+        "financialWritesEnabled": settings.financial_writes_enabled,
+        "executionMode": config.mode,
+        "agentState": config.state,
+        "emergencyStop": config.emergency_stop,
+        "configuredUniverse": list(repo.supported_symbols()),
+        "allowedSymbols": allowed_symbols,
+        "effectiveUniverse": latest_evidence["pairSelection"]["effectiveSymbols"],
+        "mandate": repo.mandate_text(mandate) if mandate is not None else None,
+        "lastDecisionAt": latest.completed_at if latest is not None else None,
+        "lastEvidenceAt": last_evidence_at,
+        "freshness": freshness,
+        "stale": stale,
+        "staleReason": stale_reason,
+        "latestDecision": latest_summary,
+        "recentDecisions": recent,
+    }

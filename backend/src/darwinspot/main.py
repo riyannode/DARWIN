@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from darwinspot.api import activity, agent, auth, demo, portfolio
+from darwinspot.api import activity, agent, auth, demo, portfolio, showcase
 from darwinspot.config import get_settings
 from darwinspot.storage.database import SessionLocal
 from darwinspot.storage.repository import Repository
@@ -28,6 +28,7 @@ app.include_router(agent.router)
 app.include_router(portfolio.router)
 app.include_router(activity.router)
 app.include_router(demo.router)
+app.include_router(showcase.router)
 
 
 @app.get("/health/live")
