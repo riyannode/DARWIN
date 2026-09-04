@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 
 from darwinspot.binance.client import ToolCall, ToolDescriptor
 from darwinspot.config import Settings
+from darwinspot.execution.demo_guard import ensure_financial_write_allowed
 
 
 class CodexTransportError(RuntimeError):
@@ -72,13 +73,13 @@ def remember_pending_confirmation(
     _pending_confirmations[intent_id] = (transport, request_id)
 
 
-async def resolve_pending_confirmation(
-    intent_id: str, action: ElicitationAction
-) -> bool:
+async def resolve_pending_confirmation(intent_id: str, action: ElicitationAction) -> bool:
     pending = _pending_confirmations.get(intent_id)
     if pending is None:
         return False
     transport, request_id = pending
+    if action == "accept":
+        ensure_financial_write_allowed()
     try:
         await transport.resolve_elicitation(request_id, action)
     except CodexTransportError:
@@ -424,6 +425,7 @@ class CodexBinanceClient:
 
     async def call_tool(self, call: ToolCall) -> Any:
         if self._is_write(call.tool):
+            ensure_financial_write_allowed()
             if not self.transport.settings.codex_write_confirmation_verified:
                 raise CodexTransportError(
                     "Binance write confirmation capability is unverified; write blocked"

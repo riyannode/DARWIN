@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 import httpx2
 
 from darwinspot.binance.client import AgentOSUnavailable, ToolCall, ToolDescriptor
+from darwinspot.execution.demo_guard import ensure_financial_write_allowed
 
 
 class BinanceSpotApiNotConfigured(AgentOSUnavailable):
@@ -21,9 +22,7 @@ class BinanceSpotApiError(AgentOSUnavailable):
     pass
 
 
-def build_signed_query(
-    params: Mapping[str, Any], api_secret: str
-) -> tuple[str, str]:
+def build_signed_query(params: Mapping[str, Any], api_secret: str) -> tuple[str, str]:
     query_values = {
         key: format(value, "f") if isinstance(value, Decimal) else value
         for key, value in params.items()
@@ -35,9 +34,7 @@ def build_signed_query(
     return query, signature
 
 
-def _schema(
-    properties: dict[str, Any], required: list[str] | None = None
-) -> dict[str, Any]:
+def _schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
     return {
         "type": "object",
         "properties": properties,
@@ -157,6 +154,8 @@ class BinanceSpotApiClient:
 
     async def call_tool(self, call: ToolCall) -> Any:
         name = call.tool.name
+        if name in {"post_order", "delete_order"}:
+            ensure_financial_write_allowed()
         if name == "get_exchange_info":
             return await self._request("GET", "/api/v3/exchangeInfo", {}, signed=False)
         if name == "get_ticker":
@@ -166,9 +165,7 @@ class BinanceSpotApiClient:
         if name == "get_account":
             return await self._request("GET", "/api/v3/account", {}, signed=True)
         if name == "get_open_orders":
-            return await self._request(
-                "GET", "/api/v3/openOrders", call.arguments, signed=True
-            )
+            return await self._request("GET", "/api/v3/openOrders", call.arguments, signed=True)
         if name == "get_my_trades":
             return await self._request("GET", "/api/v3/myTrades", call.arguments, signed=True)
         if name == "get_symbol_filters":

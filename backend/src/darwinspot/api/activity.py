@@ -57,6 +57,55 @@ from darwinspot.storage.repository import Repository
 router = APIRouter(tags=["activity"])
 
 
+def _run_decision(run: AgentRun) -> dict[str, Any]:
+    if not run.decision:
+        return {}
+    try:
+        value = json.loads(run.decision)
+    except json.JSONDecodeError:
+        return {}
+    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
+
+
+def _run_system_result(
+    run: AgentRun, decision: dict[str, Any] | None = None
+) -> tuple[str, str | None]:
+    decision = decision if decision is not None else _run_decision(run)
+    if decision.get("action") == "HOLD":
+        return "SKIPPED", "NO_TRADE"
+    if run.result_state in {
+        "POLICY_REJECTED",
+        "SIGNAL_SUPPRESSED",
+        "NO_EFFECTIVE_SYMBOLS",
+        "EMERGENCY_STOP",
+    }:
+        return "SKIPPED", run.result_state
+    if run.result_state in {"WAITING_FOR_APPROVAL", "AUTO_AUTHORIZED"}:
+        return "PENDING", run.result_state
+    if run.result_state == "FAILED":
+        return "FAILED", run.rationale
+    return run.result_state, None
+
+
+def _run_activity_event(run: AgentRun) -> dict[str, object]:
+    is_decision = run.trigger_type in {"SCHEDULED", "RUN_ONCE"}
+    decision = _run_decision(run) if is_decision else {}
+    system_outcome, reason = _run_system_result(run, decision) if is_decision else (None, None)
+    return {
+        "id": run.id,
+        "type": "decision" if is_decision else "audit",
+        "state": run.result_state,
+        "timestamp": run.started_at,
+        "trigger": run.trigger_type,
+        "rationale": run.rationale,
+        "decision": decision.get("action"),
+        "pair": decision.get("pair"),
+        "confidence": decision.get("confidence"),
+        "systemOutcome": system_outcome,
+        "reason": reason,
+    }
+
+
 @dataclass
 class PendingOAuth:
     connection_id: str
@@ -402,19 +451,7 @@ def activity(
             select(OutboxMessage).where(OutboxMessage.kind == "TELEGRAM_PROPOSAL")
         ).all()
     }
-    events: list[dict[str, object]] = [
-        {
-            "id": run.id,
-            "type": "audit"
-            if run.trigger_type in {"BUDGET_INCREASED", "EMERGENCY_STOP_CLEARED"}
-            else "decision",
-            "state": run.result_state,
-            "timestamp": run.started_at,
-            "trigger": run.trigger_type,
-            "rationale": run.rationale,
-        }
-        for run in runs
-    ]
+    events: list[dict[str, object]] = [_run_activity_event(run) for run in runs]
     events.extend(
         [
             {
@@ -437,6 +474,16 @@ def activity(
                 "executionTransport": intent.execution_transport,
                 "authorizationSource": intent.authorization_source,
                 "authorizedAt": intent.authorized_at,
+                "decision": intent.side,
+                "confidence": str(intent.confidence),
+                "systemOutcome": (
+                    "EXECUTED"
+                    if intent.local_state == "FILLED"
+                    else "FAILED"
+                    if intent.local_state in {"REJECTED_EXCHANGE", "EXPIRED"}
+                    else "PENDING"
+                ),
+                "reason": intent.budget_result if intent.budget_result != "PASS" else None,
             }
             for intent in intents
         ]

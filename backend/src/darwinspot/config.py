@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
@@ -56,6 +58,7 @@ def validate_binance_spot_base_url(value: str) -> str:
 
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./darwinspot.db"
+    demo_mode: bool = False
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.4-mini"
     openai_base_url: str | None = None

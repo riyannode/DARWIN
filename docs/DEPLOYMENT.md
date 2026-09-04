@@ -7,6 +7,22 @@ inspected 0.153.0 protocol shapes. Authenticated Binance bridge verification is
 still `PENDING` until the operator completes genuine OAuth and live read-only /
 confirmation checks. Production readiness is therefore `PARTIALLY VERIFIED`.
 
+## Judge runtime
+
+The repository includes a safe root `docker-compose.yml` for Demo Mode:
+
+```bash
+docker compose up --build
+```
+
+It starts only the existing backend/frontend pair with local SQLite, runs
+Alembic automatically, waits for the backend live healthcheck, and opens the
+frontend on `http://localhost:3000/demo`. The backend receives
+`DEMO_MODE=true`; no `.env`, LLM, Binance, Codex, Telegram, or funded-account
+configuration is read. The demo runner uses fixed evidence and exposes only
+read-only scenario routes. The Compose runtime must not be described as live
+trading.
+
 ## Topology
 
 - Frontend and backend deploy as separate services behind HTTPS ingress.

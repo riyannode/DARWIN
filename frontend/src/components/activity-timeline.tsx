@@ -12,6 +12,10 @@ type ActivityItem = {
   pair?: string;
   trigger?: string;
   budgetResult?: string;
+  decision?: string | null;
+  confidence?: string | null;
+  systemOutcome?: string;
+  reason?: string | null;
   binanceOrderId?: string | null;
   approvalState?: string | null;
   approvalExpiresAt?: string | null;
@@ -65,7 +69,7 @@ export function ActivityTimeline({ items, onChanged }: { items: ActivityItem[]; 
   }
 
   if (!items.length) return <div className="empty-state"><strong>No activity in this view.</strong><p className="muted">Connect Binance Agent OS and run one cycle. DarwinSpot never seeds fake trades.</p></div>;
-  return <div className="timeline">{items.map((item) => { const detail = details[item.id]; return <article className="timeline-item" key={item.id}><span className="timeline-marker" /><div><button className="timeline-toggle" type="button" aria-expanded={expanded === item.id} onClick={() => void toggle(item)}><span className="timeline-head"><strong>{item.type}{item.trigger ? ` · ${item.trigger}` : ""}</strong><span className="state-pill">{item.state}</span></span><span className="muted">{item.pair ?? "Agent event"} · {new Date(item.timestamp).toLocaleString()}</span>{item.executionMode && <span className="muted">Mode: {item.executionMode}</span>}{item.notificationState && <span className="muted">Telegram: {item.notificationState}{item.approvalExpiresAt ? ` · expires ${new Date(item.approvalExpiresAt).toLocaleTimeString()}` : ""}</span>}</button>{item.state === "WAITING_FOR_APPROVAL" && <div className="button-row timeline-action"><button className="button primary" type="button" onClick={() => void decide(item, "approve")}>Approve</button><button className="button secondary" type="button" onClick={() => void decide(item, "reject")}>Reject</button></div>}{expanded === item.id && <ActivityDetailPanel detail={detail} fallback={item} />}</div></article>; })}{status && <p className="form-status" role="status">{status}</p>}</div>;
+  return <div className="timeline">{items.map((item) => { const detail = details[item.id]; return <article className="timeline-item" key={item.id}><span className="timeline-marker" /><div><button className="timeline-toggle" type="button" aria-expanded={expanded === item.id} onClick={() => void toggle(item)}><span className="timeline-head"><strong>{item.type}{item.trigger ? ` · ${item.trigger}` : ""}</strong><span className="state-pill">{item.state}</span></span><span className="muted">{item.pair ?? "Agent event"} · {new Date(item.timestamp).toLocaleString()}</span>{item.decision && <span className="feed-decision">Decision: {item.decision}{item.confidence ? ` · ${Math.round(Number(item.confidence) * 100)}% confidence` : ""}</span>}{item.systemOutcome && <span className="feed-outcome">System outcome: {item.systemOutcome}{item.reason ? ` · ${item.reason}` : ""}</span>}{item.executionMode && <span className="muted">Mode: {item.executionMode}</span>}{item.notificationState && <span className="muted">Telegram: {item.notificationState}{item.approvalExpiresAt ? ` · expires ${new Date(item.approvalExpiresAt).toLocaleTimeString()}` : ""}</span>}</button>{item.state === "WAITING_FOR_APPROVAL" && <div className="button-row timeline-action"><button className="button primary" type="button" onClick={() => void decide(item, "approve")}>Approve</button><button className="button secondary" type="button" onClick={() => void decide(item, "reject")}>Reject</button></div>}{expanded === item.id && <ActivityDetailPanel detail={detail} fallback={item} />}</div></article>; })}{status && <p className="form-status" role="status">{status}</p>}</div>;
 }
 
 function ActivityDetailPanel({ detail, fallback }: { detail: ActivityDetail | undefined; fallback: ActivityItem }) {
