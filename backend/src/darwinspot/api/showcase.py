@@ -37,23 +37,20 @@ _CANDLE_FIELDS = (
     "quote_volume",
 )
 _REDACT_PRIVATE_VALUE = re.compile(
-    r"(?i)\b(?:api[_ -]?(?:key|secret)|secret|password|bearer|cookie|session|oauth|"
-    r"telegram|private[_ -]?key)\b\s*[:=]\s*[^\s,;]+"
+    r"(?i)(?:\b(?:api[_ -]?(?:key|secret)|secret|password|token|authorization|"
+    r"cookie|session|oauth|telegram|private[_ -]?key)\b\s*[:=]\s*"
+    r"(?:bearer\s+)?[^\s,;]+|\bbearer\s+[^\s,;]+)"
 )
 _REDACT_ACCOUNT_VALUE = re.compile(
-    r"(?i)\b(?:balance|balances|free|locked|account|portfolio|wallet|equity|funds?)\b\s*[:=]?\s*[$€£]?\d+(?:\.\d+)?"
-)
-_REDACT_ACCOUNT_PHRASE = re.compile(
-    r"(?i)\b(?:account|portfolio|wallet|equity|available balance|free balance|"
-    r"locked balance)\b[^.;,\n]{0,100}"
+    r"(?i)\b(?:account|balance|balances|free|locked|portfolio|wallet|equity|"
+    r"funds?)\b[^\n.;,]{0,80}?[$€£]?\d+(?:\.\d+)?"
 )
 
 
 def _public_text(value: Any, *, max_length: int = 2000) -> str:
     text = value if isinstance(value, str) else str(value)
-    text = _REDACT_ACCOUNT_PHRASE.sub("[REDACTED PRIVATE ACCOUNT DETAIL]", text)
-    text = _REDACT_ACCOUNT_VALUE.sub("[REDACTED PRIVATE ACCOUNT DETAIL]", text)
     text = _REDACT_PRIVATE_VALUE.sub("[REDACTED]", text)
+    text = _REDACT_ACCOUNT_VALUE.sub("[REDACTED PRIVATE ACCOUNT DETAIL]", text)
     return text[:max_length]
 
 
@@ -213,14 +210,18 @@ def _policy(run: AgentRun, intent: TradeIntent | None, action: str | None) -> di
             "checks": checks,
         }
     if run.result_state == "POLICY_REJECTED":
-        reason = "deterministic policy rejected the decision"
-        if intent is not None:
-            stored = _run_json(intent.policy_evidence)
-            reason = str(stored.get("reason") or reason)
+        stored = _object(_run_json(run.evidence_timestamps).get("policy"))
+        reason = stored.get("reason")
+        reason = reason if isinstance(reason, str) else "deterministic policy rejected the decision"
         return {
             "result": "REJECTED",
             "reason": _public_text(reason),
             "reasonCode": _REASON_CODES.get(reason, "POLICY_REJECTED"),
+            "checks": {
+                key: value
+                for key, value in stored.items()
+                if key.endswith("_result") and isinstance(value, str)
+            },
         }
     if intent is not None:
         stored = _run_json(intent.policy_evidence)
@@ -267,7 +268,6 @@ def _system_result(
             "REVALIDATION_FAILED",
             "REJECTED_BUDGET",
             "BLOCKED",
-            "CANCEL_BLOCKED",
             "CANCELED",
         }:
             return "SKIPPED", intent_state
@@ -282,6 +282,7 @@ def _system_result(
             "OPEN",
             "PARTIALLY_FILLED",
             "CANCEL_PENDING",
+            "CANCEL_BLOCKED",
         }:
             return "PENDING", intent_state
     if action == "HOLD":

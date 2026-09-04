@@ -50,7 +50,13 @@ class DecisionCycle:
         await reconcile_open_intents(repo, client)
         if any(
             intent.local_state
-            in {"SUBMITTING", "SUBMISSION_UNKNOWN", "CANCEL_PENDING", "REVALIDATING"}
+            in {
+                "SUBMITTING",
+                "SUBMISSION_UNKNOWN",
+                "CANCEL_PENDING",
+                "CANCEL_BLOCKED",
+                "REVALIDATING",
+            }
             for intent in repo.non_terminal_intents()
         ):
             raise RuntimeError("pending order reconciliation must complete before new proposals")

@@ -90,6 +90,8 @@ _TRANSITIONS: dict[tuple[IntentState, str], IntentState] = {
     (IntentState.OPEN, "partial_fill"): IntentState.PARTIALLY_FILLED,
     (IntentState.OPEN, "fill"): IntentState.FILLED,
     (IntentState.OPEN, "cancel_requested"): IntentState.CANCEL_PENDING,
+    (IntentState.OPEN, "cancel_blocked"): IntentState.CANCEL_BLOCKED,
+    (IntentState.CANCEL_BLOCKED, "cancel_requested"): IntentState.CANCEL_PENDING,
     (IntentState.OPEN, "expired"): IntentState.EXPIRED,
     (IntentState.PARTIALLY_FILLED, "fill"): IntentState.FILLED,
     (IntentState.PARTIALLY_FILLED, "cancel_requested"): IntentState.CANCEL_PENDING,
