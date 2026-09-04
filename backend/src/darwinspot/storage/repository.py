@@ -142,6 +142,14 @@ class Repository:
     def latest_run(self) -> AgentRun | None:
         return self.db.scalar(select(AgentRun).order_by(AgentRun.started_at.desc()).limit(1))
 
+    def latest_decision_run(self) -> AgentRun | None:
+        return self.db.scalar(
+            select(AgentRun)
+            .where(AgentRun.trigger_type.in_(("SCHEDULED", "RUN_ONCE")))
+            .order_by(AgentRun.started_at.desc())
+            .limit(1)
+        )
+
     def budget_snapshot(
         self, *, exclude_commitment_intent_id: str | None = None
     ) -> BudgetSnapshot | None:

@@ -58,7 +58,7 @@ class UniverseInput(BaseModel):
 def _agent_payload(repo: Repository) -> dict[str, object]:
     config = repo.get_or_create_agent()
     mandate = repo.current_mandate()
-    latest = repo.latest_run()
+    latest = repo.latest_decision_run()
     return {
         "mode": config.mode,
         "supportedSymbols": list(repo.supported_symbols()),

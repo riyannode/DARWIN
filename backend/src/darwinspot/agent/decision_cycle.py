@@ -79,14 +79,19 @@ class DecisionCycle:
         eligible_symbols = frozenset(valid_symbols)
         eligible_market = [item for item in eligible_market if item["symbol"] in eligible_symbols]
         if not eligible_market:
-            repo.record_audit_event(
-                trigger="DECISION_NO_EFFECTIVE_SYMBOLS",
-                state="NO_EFFECTIVE_SYMBOLS",
-                model=get_settings().openai_model,
-                evidence={
-                    "configuredSymbols": list(configured_symbols),
-                    "mandateAllowedSymbols": sorted(policy.allowed_symbols),
-                    "invalidConfiguredSymbols": sorted(universe.invalid_configured),
+            repo.record_run_evidence(
+                run_id,
+                {
+                    "pair_selection": {
+                        "selected_pair": None,
+                        "candidate_symbols": [],
+                        "candidate_history": {},
+                        "candidate_failures": {},
+                        "configured_symbols": list(configured_symbols),
+                        "mandate_allowed_symbols": sorted(policy.allowed_symbols),
+                        "invalid_configured_symbols": sorted(universe.invalid_configured),
+                        "reason": "no effective market symbols",
+                    }
                 },
             )
             log_event("DECISION_NO_EFFECTIVE_SYMBOLS", run_id=run_id)
@@ -150,11 +155,20 @@ class DecisionCycle:
         selection = await runtime.choose_pair(selection_evidence)
         pair = selection.pair
         if pair not in candidate_symbols:
-            repo.record_audit_event(
-                trigger="DECISION_POLICY_REJECTED",
-                state="POLICY_REJECTED",
-                model=get_settings().openai_model,
-                evidence={"reason": "pair outside effective universe", "pair": pair},
+            repo.record_run_evidence(
+                run_id,
+                {
+                    "pair_selection": {
+                        "selected_pair": pair,
+                        "candidate_symbols": sorted(candidate_symbols),
+                        "candidate_history": candidate_history_evidence,
+                        "candidate_failures": candidate_failures,
+                    },
+                    "rejection": {
+                        "reason": "pair outside effective universe",
+                        "model_selected_pair": pair,
+                    },
+                },
             )
             log_event(
                 "DECISION_POLICY_REJECTED",
