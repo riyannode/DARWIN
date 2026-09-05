@@ -1,15 +1,10 @@
-# DARWIN Demo Mode
+# DARWIN JUDGE DEMO
 
-Demo Mode is the deterministic judge walkthrough. It is not paper trading and
-not a live Binance session.
+The root Compose runtime is a deterministic, zero-credential judge walkthrough. It is not paper trading, a Binance session, or a production deployment.
 
-## Requirements
+## Run
 
-- Git
-- Docker Engine
-- Docker Compose v2+
-
-## Install and run
+Requirements: Git, Docker Engine, and Docker Compose v2.
 
 ```bash
 git clone https://github.com/riyannode/DARWIN.git
@@ -17,15 +12,9 @@ cd DARWIN
 docker compose up --build
 ```
 
-Open:
+Open [http://localhost:3000/demo](http://localhost:3000/demo).
 
-```text
-http://localhost:3000/demo
-```
-
-No `.env` is required.
-
-## Stop and reset
+Reset the demo's named volume and containers when finished:
 
 ```bash
 docker compose down -v --remove-orphans
@@ -33,60 +22,56 @@ docker compose down -v --remove-orphans
 
 ## Runtime contract
 
-The root `docker-compose.yml` is the safe JUDGE/DEMO runtime. It is **not** the
-production live-trading deployment.
+The checked-in `docker-compose.yml` explicitly sets:
 
-Compose sets `DEMO_MODE=true`, runs the existing Alembic schema against local
-SQLite, and starts the existing backend/frontend pair. It uses deterministic
-synthetic Binance-format fixtures and does not use a model provider, live
-Binance authentication, Codex, Telegram, or a funded account.
-
-The backend financial-write guard blocks new orders, cancellations, transfers,
-and withdrawals before an execution transport can be reached. No demo route
-creates an intent, submits an order, or writes financial state.
-
-## Read-only endpoints
-
-When `DEMO_MODE=true`:
-
-```text
-GET /api/demo
-GET /api/demo/scenarios
-GET /api/demo/scenarios/valid-buy
-GET /api/demo/scenarios/max-notional
-GET /api/demo/scenarios/hold
+```dotenv
+DATABASE_URL=sqlite:////data/darwinspot.db
+DEMO_MODE=true
+FINANCIAL_WRITES_ENABLED=false
+PUBLIC_SHOWCASE_ENABLED=false
 ```
 
-## Required scenarios
+It runs `alembic upgrade head`, starts FastAPI, waits for `/health/live`, and starts the frontend with its server-side `BACKEND_URL` pointed at the Compose backend.
 
-- `valid-buy`: `BUY BTCUSDT`, policy `PASS`, system outcome `SKIPPED`, reason
-  `DEMO_EXECUTION_BLOCKED`.
-- `max-notional`: `BUY SOLUSDT`, policy field `REJECTED` (policy-rejected),
-  system outcome `SKIPPED`, reason `MAX_ORDER_NOTIONAL`.
-- `hold`: `HOLD ETHUSDT`, no intent, system outcome `SKIPPED`, reason
-  `NO_TRADE`.
+The demo uses deterministic Binance-format fixtures and deterministic model decisions. It does **not** require or use:
 
-The API exposes the model decision and system outcome as separate fields.
-`SKIPPED` is never an `AgentDecision.action`.
+- a `.env` file;
+- an OpenAI or OpenAI-compatible provider key;
+- Binance credentials, a funded account, or a Binance connection;
+- Codex, Binance Agent OS OAuth, or Telegram; or
+- the scheduled worker.
 
-## What the demo proves
+`DEMO_MODE=true` blocks financial writes at shared submission, approved-execution, emergency-cancellation, direct Binance Spot API, and Codex/Agent OS write seams. Demo requests do not create `AgentRun` or `TradeIntent` rows.
 
-- mandate and effective-universe presentation;
-- typed evidence mapping and decision schema;
-- deterministic policy, budget, balance, filter, and concurrency evaluation;
-- explicit no-write outcome semantics;
-- inspectable evidence and product UX.
+## Routes and scenarios
 
-## What the demo does not prove
+| Route | Behavior |
+| --- | --- |
+| `GET /api/demo` | demo metadata and scenario summaries |
+| `GET /api/demo/scenarios` | all scenario summaries |
+| `GET /api/demo/scenarios/valid-buy` | policy-passing BUY, blocked before execution |
+| `GET /api/demo/scenarios/max-notional` | over-limit BUY, policy rejected |
+| `GET /api/demo/scenarios/hold` | HOLD, no intent |
 
-- live OpenAI or OpenAI-compatible inference;
-- live Binance authentication or market connectivity;
-- Codex OAuth or Agent OS MCP behavior;
-- live order submission, reconciliation, or funded-account execution.
+| Scenario | Decision | Policy | System outcome |
+| --- | --- | --- | --- |
+| `valid-buy` | `BUY BTCUSDT` | `PASS` | `SKIPPED / DEMO_EXECUTION_BLOCKED` |
+| `max-notional` | `BUY SOLUSDT` | `REJECTED / MAX_ORDER_NOTIONAL` | `SKIPPED` |
+| `hold` | `HOLD ETHUSDT` | `NOT_APPLICABLE` | `SKIPPED / NO_TRADE` |
 
-## Verification status
+`BUY`, `SELL`, and `HOLD` are model decisions. `SKIPPED` is a system outcome; a demo BUY is never an executed order.
 
-The Docker judge runtime and exact localhost port-3000 path are VERIFIED. Judge-facing
-Chromium rendering for `/demo` and public-enabled `/showcase` is VERIFIED. Full
-operator/control-room browser acceptance remains NOT CLAIMED. No live funded order
-or authenticated Codex/Binance write acceptance has been performed.
+## What judges can inspect
+
+- Trading Mandate and Configured/Allowed/Effective Universe presentation;
+- typed decision evidence, confidence, rationale, supporting factors, and risk factors;
+- candidate scan, selected-pair closed OHLCV evidence, and deterministic policy evaluation;
+- budget, balance, filter, and concurrency checks; and
+- explicit no-write semantics.
+
+## Evidence status
+
+- **IMPLEMENTED BUT NOT VERIFIED by a fresh runtime/browser exercise in this documentation-only review:** Docker JUDGE DEMO, the port-3000 `/demo` path, demo API scenarios, zero-row financial-write proof, and Chromium rendering for `/demo`.
+- **NOT VERIFIED by this demo:** external LLM inference, Binance connectivity/authentication, Binance Agent OS/Codex OAuth, order submission, reconciliation against a funded account, or a funded live order.
+
+For safe live evidence rather than fixtures, see [LIVE.md](LIVE.md) and the optional PUBLIC LIVE SHOWCASE profile at `/showcase`.

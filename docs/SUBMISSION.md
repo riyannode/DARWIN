@@ -1,96 +1,48 @@
-# DARWIN submission copy
+# DARWIN — Binance Agent OS Mini Hackathon, Track A
 
-## One-line description
+## Positioning
 
-DARWIN is a 24/7 autonomous Binance Spot trading agent. The owner provides a
-high-level Trading Mandate and hard risk boundaries; DARWIN decides what, when,
-and how to trade within those limits.
+DARWIN is an autonomous Binance Spot trading agent with a visible, deterministic authority boundary. An owner configures a high-level **Trading Mandate**, **Allowed Symbols**, **Max Per Trade**, **24h Trading Budget**, **Max Concurrent Trades**, a **Configured Universe**, and an execution mode. DARWIN decides what, when, and how to trade only within those backend-enforced limits.
 
-## Short description
+## What is implemented
 
-DARWIN continuously monitors current market and account evidence, asks its own
-`AgentRuntime` for typed BUY/SELL/HOLD decisions, applies deterministic symbol,
-risk, budget, exposure, and exchange-filter checks, and creates durable
-`TradeIntent` records. `AUTO_BOUNDED` is the primary autonomous execution path
-and does not require per-order human approval. `HUMAN_APPROVAL` is the secondary
-supervised alternative.
+- A custom DARWIN `AgentRuntime`, built on the OpenAI SDK, supports direct OpenAI or an OpenAI-compatible endpoint through `OPENAI_BASE_URL`.
+- Pair selection and final `BUY`/`SELL`/`HOLD` decisions are validated as strict Pydantic models. The decision includes confidence, rationale, supporting factors, and risk factors.
+- A newly created Configured Universe bootstraps to `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`, and `XRPUSDT` and accepts up to 100 validated Spot/USDT symbols. A database upgraded from before `0004_dual_execution_and_universe` can retain the migration's four-symbol compatibility value (`BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`) until an owner updates it.
+- The Effective Universe is `Configured Universe ∩ Allowed Symbols ∩ live-valid Binance Spot/USDT symbols`.
+- The worker scans all effective candidates, selects one pair, records selected-pair evidence, and applies deterministic policy before any execution work.
+- `AUTO_BOUNDED` uses the direct, backend-only **Binance Spot API**. `HUMAN_APPROVAL` uses explicit Telegram or web approval and **Binance Agent OS** through Codex App Server + MCP.
+- The backend owns policy, budget, balances, filters, freshness, open-order conflict, emergency stop, idempotency, external-call uncertainty, reconciliation, and the financial-write gate. The model and Codex cannot override those controls.
 
-DARWIN owns the autonomous strategy context, policy, budget, intent lifecycle,
-approval, idempotency, execution gating, reconciliation, emergency stop, and
-audit evidence. Codex is only the supported Binance OAuth identity and MCP
-transport for HUMAN_APPROVAL. DARWIN sends no natural-language trading prompt to
-Codex, and Codex never chooses trades.
+## Safety boundary
 
-## Configuration and authority
+DARWIN is Spot-only. It does not support futures, margin, leverage, options, transfers, or withdrawals. A `SELL` only sells a held Spot asset; it cannot open a short position.
 
-The owner configures one Trading Mandate, exact allowed symbols, Max Per Trade,
-Max Concurrent Trades, a rolling 24-hour BUY budget, and an execution mode.
-Configured Spot Universe and Emergency Stop remain separate backend controls.
-The Trading Mandate is strategy context only and is never authorization.
+A financial write requires the configured mode's authorization plus fresh revalidation. Durable intent state, an idempotency key, a pre-call marker, and reconciliation protect against duplicate or ambiguous submission. `SUBMISSION_UNKNOWN` is reconciled before retry. Emergency stop blocks ordinary new work and routes any necessary cancellation through durable reconciliation.
 
-BUY acquires a Spot asset. SELL sells a Spot asset already held by the account;
-SELL does not open a short position. Futures, margin, leverage, transfers,
-withdrawals, and options are outside DARWIN execution scope.
+## Judge material
 
-## Safety claims
+| Material | Location |
+| --- | --- |
+| Source | [github.com/riyannode/DARWIN](https://github.com/riyannode/DARWIN) |
+| Stable demo video | [YouTube — DARWIN: Autonomous Binance Spot Agent](https://youtu.be/HrpbPH4EQ4w) |
+| Canonical reproducible Judge Demo | `docker compose up --build` → [http://localhost:3000/demo](http://localhost:3000/demo) |
+| Temporary public read-only showcase | [Cloudflare Tunnel `/showcase`](https://velvet-dow-milwaukee-commitment.trycloudflare.com/showcase) — temporary, not a permanent production deployment |
+| Public showcase contract | deployment-relative `/showcase`, only with `DEMO_MODE=false`, `FINANCIAL_WRITES_ENABLED=false`, and `PUBLIC_SHOWCASE_ENABLED=true` |
+| Architecture and review contract | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| Replication and operating commands | [LIVE.md](LIVE.md) and [RUNBOOK.md](RUNBOOK.md) |
 
-- `AUTO_BOUNDED` uses `AUTO_POLICY` authorization and does not bypass
-  deterministic policy, account locking, or fresh revalidation.
-- `HUMAN_APPROVAL` requires explicit operator approval before ordinary writes.
-- Allowed symbols, configured universe, per-trade notional, concurrent workflow
-  count, rolling BUY budget, balances, filters, freshness, open-order conflict,
-  and emergency stop remain backend-authoritative.
-- Telegram callbacks contain only opaque `approval_id` references.
-- Rejected, expired, stale, policy-failed, or unauthenticated paths perform no
-  financial write.
-- Binance/Codex confirmation is never auto-answered.
-- Transfers and withdrawals are unsupported and fail closed.
-
-## Evidence scope
-
-DARWIN reasons from current ticker, account, order, and filter snapshots plus
-real typed CLOSED Binance Spot OHLCV. Candidate scanning uses 10 closed candles
-for each of `15m` and `1h` across every effective symbol; detailed reasoning
-uses 48 closed candles for each of `15m`, `1h`, and `4h` only for the selected
-pair. The bounded candidate bars are supplied only to pair selection. The final
-BUY/SELL/HOLD model receives selected-pair-only evidence and candidate history
-remains in the persisted `pair_selection` evidence envelope for auditability.
-Historical bars are not authorization and do not guarantee trend prediction.
+The YouTube video is the stable demo reference. The Cloudflare Tunnel is a currently available public read-only showcase and may expire; it is not the canonical reproducible demo path or a permanent production endpoint. Judges can always reproduce the judge demo locally.
 
 ## Verification status
 
-```text
-Codex/Binance transport implementation: IMPLEMENTED
-Authenticated live bridge verification: PENDING
-Production readiness: PARTIALLY VERIFIED
-```
+| Claim | Status |
+| --- | --- |
+| Zero-credential Docker judge demo and deterministic no-write behavior | **IMPLEMENTED BUT NOT VERIFIED** by a fresh runtime exercise in this documentation-only review |
+| `/demo` and public-enabled `/showcase` Chromium rendering | **IMPLEMENTED BUT NOT VERIFIED** by a fresh Chromium exercise in this documentation-only review |
+| AgentRuntime, Pydantic validation, direct Spot adapter, Binance Agent OS/Codex transport, policy, durable state, and reconciliation | **IMPLEMENTED** |
+| Funded `AUTO_BOUNDED` order | **NOT VERIFIED** |
+| Authenticated `HUMAN_APPROVAL` Binance Agent OS/Codex acceptance | **PENDING / NOT VERIFIED** |
+| Full owner-control-panel browser acceptance | **NOT VERIFIED** |
 
-Manual verification remains operator-owned:
-
-1. genuine Codex/Binance OAuth;
-2. authenticated `mcpServerStatus/list`;
-3. populated Binance tools;
-4. exact harmless read-only tool call and structured result;
-5. observed write confirmation/elicitation;
-6. decline the first write confirmation and prove zero trade.
-
-Telegram has no official sandbox. Use a dedicated test bot/private chat for real
-Bot API verification. No funded trade is required for the initial acceptance.
-
-## Demo flow
-
-1. Start DARWIN safely before Binance authentication.
-2. Show `AUTH_REQUIRED`/`UNVERIFIED` Codex state.
-3. Configure one Trading Mandate, hard guardrails, budget, and mode.
-4. Show the 24/7 monitoring/decision architecture.
-5. Show bounded candidate history comparison across the configured effective
-   universe; do not describe the five bootstrap symbols as dynamically ranked.
-6. In `AUTO_BOUNDED`, show an autonomous signal and bounded execution path
-   without per-order approval.
-7. In `HUMAN_APPROVAL`, show a supervised proposal and fresh revalidation.
-8. Decline the first transport confirmation and show zero trade.
-
-## Replication
-
-See [RUNBOOK.md](RUNBOOK.md), [DEPLOYMENT.md](DEPLOYMENT.md), and
-[ARCHITECTURE.md](ARCHITECTURE.md). No hosted URL is claimed by this repository.
+The judge demo is synthetic: it has no external LLM, Binance connection, or financial write. The PUBLIC LIVE SHOWCASE is real-model/real-market/read-only evidence; it is not a claim of funded live trading.

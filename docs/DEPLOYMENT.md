@@ -1,125 +1,89 @@
 # DARWIN Deployment
 
+## Checked-in deployment state
+
+The repository ships one `docker-compose.yml`. It is intentionally the **JUDGE DEMO** runtime, using local SQLite and `DEMO_MODE=true`; it is not a live-trading deployment manifest.
+
+A live deployment needs managed processes for the API, the worker, the frontend, and PostgreSQL. The worker is required for scheduled decision cycles, approval expiry, execution/confirmation work, notification outbox work, and emergency-cancellation work. Starting FastAPI alone is not a complete live operation.
+
 ## Runtime profiles
 
-The deployment has three explicit profiles:
-
-| Profile | DEMO_MODE | FINANCIAL_WRITES_ENABLED | PUBLIC_SHOWCASE_ENABLED | Evidence |
+| Profile | `DEMO_MODE` | `FINANCIAL_WRITES_ENABLED` | `PUBLIC_SHOWCASE_ENABLED` | Behavior |
 | --- | --- | --- | --- | --- |
-| JUDGE DEMO | `true` | `false` | `false` | Synthetic `/demo`, zero credentials |
-| PUBLIC LIVE SHOWCASE | `false` | `false` | `true` | Real model/market reads, persisted `/showcase`, no writes |
-| REAL LIVE TRADING | `false` | `true` | `false` recommended | Operator-authenticated live execution after normal gates |
+| **JUDGE DEMO** | `true` | `false` | `false` | Synthetic `/demo`, zero credentials, no external LLM, no Binance connection, no financial writes. |
+| **PUBLIC LIVE SHOWCASE** | `false` | `false` | `true` | Real model and Binance evidence, scheduled worker, persisted read-only `/showcase`, no financial writes. |
+| **REAL LIVE TRADING** | `false` | `true` | normally `false` | Operator-controlled Spot execution after the configured mode's authorization and all backend gates. |
 
-`FINANCIAL_WRITES_ENABLED` is only an additional final authorization boundary.
-It never bypasses deterministic policy, budget, emergency stop, approval,
-revalidation, idempotency, or transport checks. `DEMO_MODE=true` always wins.
+The showcase endpoint returns 404 unless it is public-enabled, demo mode is off, and financial writes are off. It is public read-only; all operator APIs and mutations remain owner-authenticated.
 
-The public showcase is read-only and fail-closed: when
-`PUBLIC_SHOWCASE_ENABLED=false`, `GET /api/showcase` returns 404. Existing
-operator APIs and every mutation remain owner-authenticated.
+The financial-write setting is enforced at safe-live decision admission and again directly before external submission; it is not an authorization bypass.
 
-## Current status
+## Profile-specific transports
 
-| Area | Status |
-| --- | --- |
-| Demo/Judge Docker runtime | VERIFIED |
-| Exact localhost:3000 judge path | VERIFIED on a clean port-3000 re-test |
-| AUTO_BOUNDED implementation | Present; funded live-order acceptance NOT VERIFIED |
-| HUMAN_APPROVAL implementation | Present; genuine authenticated Codex/Binance acceptance PENDING / NOT VERIFIED |
-| Judge-facing `/demo` and public-enabled `/showcase` Chromium rendering | VERIFIED |
-| Full operator/control-room browser acceptance | NOT CLAIMED / not exhaustively verified |
-| Fully production-verified live trading | Not claimed |
+| Mode | Required transport | Financial credentials | Human authorization |
+| --- | --- | --- | --- |
+| `AUTO_BOUNDED` | direct Binance Spot API | `BINANCE_API_KEY` + `BINANCE_API_SECRET` | none per order |
+| `HUMAN_APPROVAL` | Codex App Server + Binance Agent OS MCP | genuine Codex-managed Agent OS OAuth material, protected by `TOKEN_ENCRYPTION_KEY` | Telegram or web approval |
 
-No funded Binance order, withdrawal, transfer, or live Codex financial
-confirmation was performed for this verification.
+`AUTO_BOUNDED` does not use Codex OAuth or Telegram approval as its primary transport. `HUMAN_APPROVAL` does not use Binance API keys as its primary write transport. Both remain bounded by the same deterministic policy, fresh revalidation, idempotency, reconciliation, emergency stop, and financial-write gate.
 
-## Judge runtime
-
-The root `docker-compose.yml` is a safe Demo Mode runtime:
-
-```bash
-docker compose up --build
-```
-
-It starts the backend/frontend pair with local SQLite, runs Alembic, waits for
-backend live health, and serves the judge page at:
+## Service topology
 
 ```text
-http://localhost:3000/demo
+Browser
+  -> Next.js frontend (server-side /api rewrite via BACKEND_URL)
+  -> FastAPI API
+  -> PostgreSQL
+  -> worker
+       -> OpenAI or compatible model endpoint
+       -> AUTO_BOUNDED: Binance Spot API
+       -> HUMAN_APPROVAL: Codex App Server -> Binance Agent OS MCP
+       -> optional Telegram Bot API
 ```
 
-The backend receives `DEMO_MODE=true`. No `.env`, model-provider key, Binance
-credential, Codex auth, Telegram setting, or funded account is required. Fixed
-synthetic fixtures are used, and the backend financial-write guard blocks
-financial writes.
+Terminate TLS and enforce ingress policy outside the repository. Keep the backend database URL, model key, owner password hash, Binance credentials, OAuth material, and Telegram values outside frontend configuration. The code supports PostgreSQL advisory locks for ordinary financial serialization; SQLite is only the demo default.
 
-Reset the runtime with:
+## Commands
 
-```bash
-docker compose down -v --remove-orphans
-```
-
-This Compose file is not the production live-trading deployment.
-
-## Live topology
-
-- Frontend and backend run as separate processes behind HTTPS ingress or a
-  reverse proxy.
-- PostgreSQL is the durable source of truth and coordination dependency.
-- API and worker can run as multiple replicas.
-- The worker is required for scheduled autonomous cycles and durable outbox
-  work; FastAPI alone is not a complete live deployment.
-- Live installation and the mode-specific credential matrix are maintained in
-  [LIVE.md](LIVE.md).
-
-## Live configuration boundary
-
-LIVE requires `DEMO_MODE=false` and the common settings in `LIVE.md`.
-
-- `AUTO_BOUNDED` uses the backend Binance Spot API with a dedicated
-  `BINANCE_API_KEY` and `BINANCE_API_SECRET`. A full decision cycle requires
-  these authenticated account reads in addition to public market OHLCV. It does
-  not require per-order human approval, Codex OAuth, or `TOKEN_ENCRYPTION_KEY`
-  for its readiness path.
-- `HUMAN_APPROVAL` uses Codex App Server and Binance Agent OS MCP. It requires
-  `TOKEN_ENCRYPTION_KEY` for persisted connection/OAuth material and genuine
-  Codex-managed Binance Agent OS OAuth. It does not use
-  `BINANCE_API_KEY`/`BINANCE_API_SECRET` as its primary write transport.
-- `CODEX_WRITE_CONFIRMATION_VERIFIED=false` remains required until a real
-  operator manually verifies the live write elicitation contract.
-- Telegram is optional and must be configured as one complete four-value
-  group. Notification delivery is not financial authorization.
-
-## Release checks
-
-Before a live deployment, provision PostgreSQL, run the migrations once, start
-both API and worker processes, and verify health, owner authentication, mode
-configuration, and durable activity state. Keep live acceptance status honest:
-implementation is not evidence of authenticated provider or funded execution.
+The authoritative command sequence is in [LIVE.md](LIVE.md). Its essential live steps are:
 
 ```bash
 cd backend
 uv sync --frozen
-cp .env.example .env
 PYTHONPATH=src uv run alembic upgrade head
 PYTHONPATH=src uv run uvicorn darwinspot.main:app --host 0.0.0.0 --port 8000
 ```
 
-In a separate process:
+In a separate managed process:
 
 ```bash
 cd backend
 PYTHONPATH=src uv run python -m darwinspot.worker
 ```
 
-Frontend build/start is documented in [LIVE.md](LIVE.md).
+Build and start the frontend with a server-side backend origin:
 
-## Failure and rollback
+```bash
+cd frontend
+BACKEND_URL=http://127.0.0.1:8000 pnpm build
+HOSTNAME=0.0.0.0 PORT=3000 pnpm start
+```
 
-If Codex exits or authentication expires, keep the worker alive, mark the
-transport unavailable, retry bounded work, and block writes. If a request may
-have crossed an external write marker, reconcile before retry. Never roll back
-durable financial state by deleting intents or order events.
+## Health and acceptance boundary
 
-Never log bot tokens, OAuth codes, bearer credentials, cookies, owner passwords,
-or Codex credential material.
+```bash
+curl -i http://127.0.0.1:8000/health/live
+curl -i http://127.0.0.1:8000/health/ready
+```
+
+`/health/ready` requires owner credentials and model configuration in live mode, plus mode-dependent direct Spot credentials for `AUTO_BOUNDED` or `TOKEN_ENCRYPTION_KEY` for `HUMAN_APPROVAL`.
+
+| Claim | Status |
+| --- | --- |
+| Docker JUDGE DEMO | **IMPLEMENTED BUT NOT VERIFIED** by a fresh runtime exercise in this documentation-only review |
+| `/demo` and public-enabled `/showcase` Chromium rendering | **IMPLEMENTED BUT NOT VERIFIED** by a fresh Chromium exercise in this documentation-only review |
+| Live process/transport implementation | **IMPLEMENTED** |
+| Funded direct Spot order | **NOT VERIFIED** |
+| Authenticated Binance Agent OS/Codex acceptance | **PENDING / NOT VERIFIED** |
+
+No deploy, restart, or service mutation is performed by these instructions.
