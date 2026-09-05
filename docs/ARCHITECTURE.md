@@ -146,67 +146,84 @@ below is **PLANNED / POST-JUDGING** until its own acceptance evidence exists.
 **AI proposes. DARWIN authorizes. Binance executes.**
 
 No model, host agent, or external interface is financial execution authority.
-The deterministic backend remains the sole authorization layer for every
-financial write, regardless of which operating mode or transport is active.
+The reasoning engine may propose a trade. It is never financial authorization
+authority. The deterministic DARWIN backend remains the sole financial
+authorization authority for every financial write, regardless of which operating
+mode or transport is active.
 
-### Two operating modes [PLANNED / POST-JUDGING]
+### User-facing operating modes [PLANNED / POST-JUDGING]
 
-DARWIN supports two distinct operating modes. They share the same application
-services, policy engine, durable state, and audit trail.
+DARWIN has exactly two user-facing operating modes. They share the same
+deterministic authorization services, policy engine, durable state, and audit
+trail. They do not share the same reasoning engine.
 
-| Mode | Reasoning engine | LLM API key in DARWIN | Persistent autonomy after host closes | Primary use |
+```text
+DARWIN
+├── HUMAN_APPROVAL
+└── AUTONOMOUS
+```
+
+| Mode | Reasoning engine | LLM API key in DARWIN | Persistent after host closes | Execution transport |
 | --- | --- | --- | --- | --- |
-| `MCP_NATIVE` | Host agent (Codex, Claude Code, Cursor, ChatGPT, or another MCP-compatible host) | not required | no | interactive, owner-supervised trading |
-| `AUTONOMOUS` | DARWIN `AgentRuntime` (server-side) | required | yes | persistent unattended trading |
+| `HUMAN_APPROVAL` | External MCP host (Codex, Claude Code, Cursor, ChatGPT) | not required | no | Binance Agent OS MCP |
+| `AUTONOMOUS` | DARWIN `AgentRuntime` (server-side) | required | yes | direct Binance Spot API |
 
-#### MCP_NATIVE [PLANNED / POST-JUDGING]
+#### HUMAN_APPROVAL [PLANNED / POST-JUDGING]
 
-In `MCP_NATIVE` mode, an MCP-compatible host is the reasoning and planning
-engine. The host may inspect market and account context and propose an action,
-but the host and its model are never trusted as financial authorization.
-
-DARWIN does **not** require its own LLM API key in this mode. DARWIN provides
-the deterministic policy, risk, budget, mandate, state, audit, and
-authorization layer. The host model proposes; DARWIN authorizes; Binance
-executes.
+`HUMAN_APPROVAL` is the MCP-native interactive mode. An external MCP-compatible
+host is the reasoning and planning engine. The host may inspect market and
+account context, select a candidate trade, and propose it — but the host and
+its model are never trusted as financial authorization.
 
 ```text
 Codex / Claude Code / Cursor / ChatGPT
   |  reasoning + MCP tools
+  |  may propose a candidate trade
   v
 DARWIN MCP Server
-  |  deterministic policy
-  |  mandate / budget / risk / validation
-  |  durable audit
+  |  proposal validation (server-side)
+  |  deterministic policy / mandate / budget / risk
+  |  durable proposal submission
   v
-authorized execution path
-  +--> Binance Agent OS MCP (when workflow requires provider confirmation)
-  +--> direct Binance Spot API (future optional AUTO_BOUNDED autonomous mode)
+Binance Agent OS MCP
+  |  human / provider confirmation
+  v
+Binance
 ```
 
-Closing or disconnecting the MCP host must not stop an already-running
-`AUTONOMOUS` agent. Agent execution is owned by DARWIN's durable server-side
-runtime and worker state, not by the lifetime of an MCP host session.
+DARWIN does **not** require its own LLM API key in this mode. The host model
+proposes; DARWIN independently validates current market/account state and all
+financial values; DARWIN authorizes; Binance executes.
 
-The web UI may remain optional, legacy, or operator-facing. `MCP_NATIVE` may
-become the primary control surface post-judging. The docs must not imply the
-frontend is required in the future.
+Host-provided pair, amount, price, confidence, rationale, or other values are
+**untrusted proposal inputs**. DARWIN independently validates everything before
+financial execution. The host may not authorize a financial write. The host may
+not directly execute trusted financial writes. The host may not bypass DARWIN
+policy.
+
+Closing the MCP host ends the interactive reasoning session. No DARWIN-side
+LLM API key should be required for this mode after future implementation.
+
+Binance Agent OS MCP is the intended outbound execution integration where
+applicable. Do not claim unattended autonomous writes through Binance Agent
+OS MCP if provider confirmation is required by its provider contract.
 
 #### AUTONOMOUS [PLANNED / POST-JUDGING]
 
-In `AUTONOMOUS` mode, DARWIN's own `AgentRuntime` performs reasoning
-server-side. This mode requires a configured LLM provider or API endpoint
-because DARWIN itself generates the model calls.
-
-`AUTO_BOUNDED` may continue using the direct Binance Spot API after
-deterministic authorization and fresh revalidation. This mode is optional and
-separate from `MCP_NATIVE`.
+`AUTONOMOUS` is the persistent server-side mode. DARWIN's own `AgentRuntime`
+performs reasoning through the configured LLM provider. This mode requires a
+configured LLM provider or API endpoint because DARWIN itself generates the
+model calls.
 
 ```text
-DARWIN AgentRuntime
-  |  server-side reasoning + policy
+DARWIN worker
+  |  DARWIN AgentRuntime
+  |  configured LLM provider
   v
-deterministic backend authorization
+proposed trade
+  |
+  v
+deterministic DARWIN policy / mandate / budget / risk
   |  fresh revalidation
   v
 direct Binance Spot API
@@ -215,42 +232,61 @@ direct Binance Spot API
 Binance
 ```
 
+The worker can continue operating after any Codex/Claude/Cursor/ChatGPT
+disconnects. No per-order human approval is required after deterministic policy
+authorization. Direct Binance Spot API remains the execution transport.
+
+The existing `AUTO_BOUNDED` implementation is the current internal name for
+the `AUTONOMOUS` execution path. `AUTO_BOUNDED` terminology may appear in
+code, logs, and implementation documentation where necessary for accuracy, but
+the user-facing product mode is `AUTONOMOUS`.
+
 Host disconnect must not stop an already-running autonomous worker. The
 execution transport remains separate from decision authority.
 
 ### Target architecture [PLANNED / POST-JUDGING]
 
-The target is one shared application-service boundary for REST/web, future MCP
-handlers, and the worker. All three call the same application/domain services.
-No business logic or financial policy is duplicated across interfaces.
+The target is one shared deterministic authorization boundary for both modes.
+`HUMAN_APPROVAL` and `AUTONOMOUS` both enter through the same policy, mandate,
+budget, universe, account/market validation, durable intent, idempotency,
+execution state, submission uncertainty, reconciliation, audit, and emergency
+stop services. They do not share the same reasoning engine.
 
 ```text
-Codex / Claude / Cursor / ChatGPT
-  |  reasoning + MCP v
-DARWIN MCP  |  deterministic policy | mandate | budget | risk | validation | durable audit
-  |  authorized execution path
-  +--> Binance Agent OS MCP (when selected workflow requires provider confirmation)
-  +--> Direct Binance Spot API (future optional AUTO_BOUNDED autonomous mode)
+HUMAN_APPROVAL path:
+  MCP host reasoning → DARWIN MCP → proposal → shared authorization services
+    → Binance Agent OS MCP → human/provider confirmation → Binance
 
-REST / Web UI  ─────┐
-                     │
-Worker             ─┤  same shared application services
-                     │
-MCP Native handlers ┤
-                     v
-           shared application services
-                     │
-          policy / budget / approval
-          execution / reconciliation
-                     │
-         AUTO_BOUNDED / HUMAN_APPROVAL
+AUTONOMOUS path:
+  DARWIN AgentRuntime → proposed trade → shared authorization services
+    → direct Binance Spot API → Binance
+
+Shared authorization services:
+  policy / mandate / budget / universe / account validation
+  durable intent / idempotency / execution state
+  submission uncertainty / reconciliation / audit / emergency stop
 ```
 
-### Inbound MCP read-only surface [PLANNED / POST-JUDGING]
+The web UI, REST API, future MCP handlers, and worker all call the same
+shared application services. No business logic or financial policy is
+duplicated across interfaces.
+
+### Frontend positioning [PLANNED / POST-JUDGING]
+
+The web UI may remain optional, legacy, operator-facing, or convenience UI.
+MCP may become the primary post-judging control surface. The frontend is not
+financial authority. The frontend is not a required dependency for either
+`HUMAN_APPROVAL` or `AUTONOMOUS`.
+
+### Inbound DARWIN MCP Server [PLANNED / POST-JUDGING]
 
 Claude, Codex, ChatGPT, and other compatible MCP hosts will connect to a
 future **DARWIN MCP Server**. The server must expose a read-only surface first
 before any mutation tools are enabled.
+
+For `HUMAN_APPROVAL`, the host reasoning enters through a proposal /
+application-service seam. No DARWIN-internal LLM call is required. The
+proposal enters the shared deterministic authorization services.
 
 The server calls the same DARWIN application/domain services and durable state
 machines used by the REST API and web UI. An MCP handler is an adapter at the
@@ -278,10 +314,6 @@ discovery, tool invocation, and protocol elicitation/confirmation handling.
 DARWIN still owns the decision, mandate, deterministic policy, approval state
 machine, financial-write gate, submission uncertainty, and reconciliation.
 
-Do not incorrectly claim Binance Agent OS MCP currently provides unattended
-autonomous financial writes if confirmation is required by its provider
-contract.
-
 The current Codex-specific App Server bridge remains the active implementation
 seam documented above. It is planned for removal only after direct OAuth, tool
 discovery, tool calling, elicitation/confirmation, submission-uncertainty, and
@@ -290,10 +322,10 @@ contract. Until then, the existing `CODEX_WRITE_CONFIRMATION_VERIFIED=false`
 fail-closed behavior and **PENDING / NOT VERIFIED** status must remain unchanged.
 No bridge removal is implied by this roadmap document.
 
-### AUTO_BOUNDED execution path [PLANNED / POST-JUDGING]
+### AUTONOMOUS execution path [PLANNED / POST-JUDGING]
 
-The existing `AUTO_BOUNDED` direct Binance Spot API architecture may remain as
-the autonomous execution path:
+The existing `AUTO_BOUNDED` direct Binance Spot API architecture is the
+current implementation of the `AUTONOMOUS` execution path:
 
 ```text
 DARWIN
@@ -304,7 +336,7 @@ DARWIN
 ```
 
 It remains architecturally independent of MCP, Codex OAuth, and per-order human
-approval. The roadmap must not route `AUTO_BOUNDED` through the future DARWIN
+approval. The roadmap must not route `AUTONOMOUS` through the future DARWIN
 MCP Server or through Binance Agent OS MCP, and must not weaken its existing
 policy, freshness, idempotency, write-marker, or reconciliation controls.
 
@@ -312,24 +344,14 @@ Keep execution transport separate from decision authority.
 
 ### Operator interfaces and runtime authority [PLANNED / POST-JUDGING]
 
-In `MCP_NATIVE` mode, the host agent is the reasoning engine. DARWIN is the
-deterministic authorization/policy layer. The host model may propose a trade,
-but the deterministic backend must remain the only financial authorization
-authority.
+In `HUMAN_APPROVAL` mode, the external MCP host is the reasoning engine.
+DARWIN is the deterministic authorization/policy layer. The host model may
+propose a candidate trade, but the deterministic backend must remain the only
+financial authorization authority. The host may not authorize a financial write
+or bypass backend policy.
 
 In `AUTONOMOUS` mode, DARWIN's `AgentRuntime` is the reasoning engine and the
 deterministic backend is the authorization authority.
-
-Claude, Codex, ChatGPT, and other compatible MCP hosts are operator interfaces
-in `MCP_NATIVE` mode. They may request observations or an explicitly authorized
-operation, but they must not choose trades, interpret a mandate as execution
-permission, calculate trusted financial values, or bypass backend policy.
-
-DARWIN's `AgentRuntime` remains the trading decision runtime in `AUTONOMOUS`
-mode. The deterministic backend remains the authorization authority for mandate,
-budget, symbols, balances, filters, freshness, open-order conflict, execution
-mode, financial writes, approval state, emergency stop, idempotency, and
-reconciliation.
 
 Closing or disconnecting an MCP host must not stop an already-running
 `AUTONOMOUS` agent. Agent execution is owned by DARWIN's durable server-side
@@ -337,19 +359,19 @@ runtime and worker state, not by the lifetime of an MCP host session. A host
 disconnect may end that host's request/session, but it must not cancel a running
 cycle or disable the backend's authorization and recovery controls.
 
-### Shared architecture and non-duplication rule [PLANNED / POST-JUDGING]
+### Shared authorization services [PLANNED / POST-JUDGING]
 
-The future inbound MCP server, REST/web, and worker must reuse the existing
-deep application seams rather than implement policy in protocol handlers:
+Both modes enter through the same shared deterministic authorization services.
+They do not need to share the same reasoning engine.
 
-| Shared authoritative module/seam | MCP handler responsibility |
-| --- | --- |
-| `AgentRuntime` and `DecisionCycle` | Request a run through the existing decision flow; never add a second model decision path. |
-| `Repository` and versioned mandate/budget state | Read current durable state and persist mutations through the same transaction rules. |
-| deterministic execution policy and `ExecutionGateway` | Reuse symbol, notional, budget, balance, filter, freshness, open-order, and emergency-stop checks. |
-| `TradeIntentApprovalService` | Own approve/reject/expiry/claim/consume transitions for every approval channel. |
-| `ApprovedExecution` and reconciliation | Own revalidation, write-boundary markers, confirmation uncertainty, external submission, and recovery. |
-| existing emergency-stop branch and audit event path | Keep emergency stop authoritative, deduplicated, and reconciliation-safe. |
+| Shared authoritative module/seam | HUMAN_APPROVAL responsibility | AUTONOMOUS responsibility |
+| --- | --- | --- |
+| deterministic policy, mandate, budget, universe, account/market validation | Host proposal enters through MCP application-service seam; DARWIN validates independently | `AgentRuntime` / `DecisionCycle` propose; DARWIN validates the same way |
+| `Repository` and versioned mandate/budget state | Read current durable state and persist mutations through the same transaction rules | Same |
+| `ExecutionGateway` and execution checks | Reuse symbol, notional, budget, balance, filter, freshness, open-order, and emergency-stop checks | Same |
+| `TradeIntentApprovalService` | Own approve/reject/expiry/claim/consume transitions for HUMAN_APPROVAL approval channel | Same approval service for any approval-required path |
+| `ApprovedExecution` and reconciliation | Own revalidation, write-boundary markers, confirmation uncertainty, external submission, and recovery | Same |
+| emergency-stop branch and audit event path | Keep emergency stop authoritative, deduplicated, and reconciliation-safe | Same |
 
 If a caller-facing operation lacks a suitable shared module, the maintenance
 work should first deepen that module at its existing seam. MCP handlers must
@@ -388,26 +410,53 @@ as the authenticated web/API projections and must not expose credentials, OAuth
 or session material, provider headers, Telegram identifiers, private data beyond
 the authorized operator view, or hidden reasoning.
 
-#### Proposal validation / policy evaluation [PLANNED / POST-JUDGING]
+#### Proposal validation [PLANNED / POST-JUDGING]
 
 - `darwin.validate_proposal`
 
 This tool accepts a host-supplied trade proposal (pair, amount, price,
 confidence, rationale) and returns the deterministic policy evaluation without
-executing. Host-supplied values are proposals only; the result reflects
-server-side validation against the current mandate, budget, universe, filters,
-and freshness. This tool must not create durable intent or trigger financial
-transport.
+creating durable intent. Host-supplied values are proposals only; the result
+reflects server-side validation against the current mandate, budget, universe,
+filters, and freshness. This tool must not create durable intent or trigger
+financial transport. Use this for dry-run evaluation before submission.
+
+#### Durable proposal submission [PLANNED / POST-JUDGING]
+
+- `darwin.submit_proposal` (name provisional)
+
+This tool accepts a host-supplied trade proposal and routes it through the
+`HUMAN_APPROVAL` durable execution workflow. It must:
+
+- accept the host proposal as untrusted input;
+- independently fetch and revalidate current market/account state;
+- enforce the trading mandate, allowed/configured universe, budget, max
+  notional, balance requirements, Binance filters, freshness, open-order
+  conflict checks, and emergency stop;
+- enforce execution-mode requirements;
+- use idempotency and replay protection;
+- create durable intent only after deterministic admission;
+- route to the `HUMAN_APPROVAL` execution workflow (Binance Agent OS MCP
+  for provider confirmation where applicable);
+- never expose unrestricted `place_order`, `buy`, or `sell`;
+- never trust client-computed policy results; and
+- never trust client-provided final Binance execution arguments.
+
+The exact final name may remain provisional until implementation stabilizes.
 
 #### Agent control [PLANNED / POST-JUDGING]
 
-- `darwin.run_once`
+- `darwin.run_once` — **AUTONOMOUS mode only.**
 - `darwin.start`
 - `darwin.stop`
 
-Each control tool must delegate to the same run/control module and durable agent
-state used by the REST and web paths. `run_once` must not bypass the normal
-DecisionCycle, policy admission, write gate, or selected execution mode.
+`darwin.run_once` invokes `AgentRuntime` / `DecisionCycle` and is
+AUTONOMOUS-specific. It must not bypass the normal DecisionCycle, policy
+admission, write gate, or selected execution mode. Do not imply that
+`HUMAN_APPROVAL` / MCP reasoning requires DARWIN's `AgentRuntime`.
+
+`darwin.start` and `darwin.stop` control the durable worker state and apply
+to the persistent autonomous runtime.
 
 #### Human approval [PLANNED / POST-JUDGING]
 
@@ -462,7 +511,9 @@ write durable state directly from a handler.
 | --- | --- | --- |
 | Read-only tools | Normal authenticated operator access | Return an authorized, redacted projection only; no mutation or financial transport. |
 | `darwin.validate_proposal` | Normal authenticated operator access | Evaluate host-supplied proposal against current policy; return pass/reject with reasons; no durable intent created. |
-| `darwin.run_once`, `darwin.start`, `darwin.stop` | Authenticated owner authorization | Use the existing agent control/decision flow and record the operator action and resulting state. |
+| `darwin.submit_proposal` | Authenticated owner authorization | Accept untrusted proposal; independently revalidate market/account state; enforce all policy checks; create durable intent only after admission; route to HUMAN_APPROVAL execution workflow; audit proposal, validation outcome, and intent creation. |
+| `darwin.run_once` (AUTONOMOUS only) | Authenticated owner authorization | Invoke `AgentRuntime` / `DecisionCycle`; use the existing agent control/decision flow and record the operator action and resulting state. |
+| `darwin.start`, `darwin.stop` | Authenticated owner authorization | Control the durable autonomous worker state; record operator action. |
 | `darwin.approve_trade`, `darwin.reject_trade`, `darwin.resolve_execution_confirmation` | Authenticated owner authorization | Use the durable approval/confirmation state machine, opaque server-side references, conditional transitions, idempotency, and audit events. |
 | `darwin.update_mandate`, `darwin.update_budget`, `darwin.change_mode`, `darwin.update_universe` | Stronger mutation authorization | Require authenticated owner mutation access; validate server-side; persist auditable before/after state and version/hash metadata. |
 | `darwin.emergency_stop` | Authenticated owner authorization with the existing recent-reauthentication requirement | Use the existing emergency-stop state and cancellation/reconciliation path; audit operator identity, targets, and outcomes. |
@@ -510,8 +561,8 @@ must pass its exit gate before the next mutation surface is enabled.
    produce the same durable readback; no MCP handler directly writes Binance or
    manipulates durable execution state.
 
-2. **Phase 2 — Inbound MCP read-only surface [PLANNED / POST-JUDGING].** Add
-   the future inbound DARWIN MCP Server as a thin adapter over the shared
+2. **Phase 2 — Inbound DARWIN MCP read-only surface [PLANNED / POST-JUDGING].**
+   Add the future inbound DARWIN MCP Server as a thin adapter over the shared
    application services. Expose read-only tools first:
    `darwin.get_status`, `darwin.get_mandate`, `darwin.get_budget`,
    `darwin.get_universe`, `darwin.get_portfolio`, `darwin.get_latest_decision`,
@@ -524,18 +575,18 @@ must pass its exit gate before the next mutation surface is enabled.
    audit correlation; mutation tools remain disabled until their authorization
    and state-machine tests pass.
 
-3. **Phase 3 — MCP_NATIVE proposal/policy workflow [PLANNED / POST-JUDGING].**
-   Add the `darwin.validate_proposal` tool so MCP hosts can submit trade
-   proposals for deterministic policy evaluation. Add run controls
-   (`darwin.run_once`, `darwin.start`, `darwin.stop`) and emergency stop
-   (`darwin.emergency_stop`). The host model proposes; DARWIN authorizes.
-   Control and approval tools must delegate to the existing durable run,
-   approval, confirmation, emergency-stop, and reconciliation paths.
+3. **Phase 3 — HUMAN_APPROVAL proposal and durable submission
+   [PLANNED / POST-JUDGING].** Add `darwin.validate_proposal` for dry-run
+   policy evaluation and `darwin.submit_proposal` (name provisional) for
+   durable proposal submission into the HUMAN_APPROVAL execution workflow.
+   Add emergency stop (`darwin.emergency_stop`). Host reasoning enters through
+   the MCP proposal/application-service seam; no DARWIN-internal LLM call is
+   required. DARWIN independently validates all financial values.
 
    **Exit gate:** proposal validation returns correct pass/reject with policy
-   reasons; run controls delegate to the same DecisionCycle as REST; emergency
-   stop uses the same durable cancellation path; no MCP handler creates
-   duplicate policy or execution logic.
+   reasons; durable submission creates intent only after deterministic
+   admission; emergency stop uses the same durable cancellation path; no MCP
+   handler creates duplicate policy or execution logic.
 
 4. **Phase 4 — Owner configuration and control via MCP [PLANNED / POST-JUDGING].**
    Add the owner configuration tools:
@@ -555,11 +606,12 @@ must pass its exit gate before the next mutation surface is enabled.
    concurrent updates, idempotent retries, before/after audit readback, and
    unchanged REST/web behavior are verified.
 
-5. **Phase 5 — Binance Agent OS MCP integration/parity [PLANNED / POST-JUDGING].**
-   Make the official MCP Python SDK the primary Binance Agent OS transport for
-   `HUMAN_APPROVAL`, reusing the existing `BinanceAgentOSClient` foundations,
-   typed mappers, `ToolCatalog`, and durable execution modules. Verify the full
-   OAuth lifecycle, tool discovery and schema validation, read calls, write
+5. **Phase 5 — Direct Binance Agent OS MCP integration/parity for
+   HUMAN_APPROVAL [PLANNED / POST-JUDGING].** Make the official MCP Python
+   SDK the primary Binance Agent OS transport for `HUMAN_APPROVAL`, reusing
+   the existing `BinanceAgentOSClient` foundations, typed mappers,
+   `ToolCatalog`, and durable execution modules. Verify the full OAuth
+   lifecycle, tool discovery and schema validation, read calls, write
    elicitation/confirmation, and transport error handling against the real
    provider. Preserve durable HUMAN_APPROVAL approval semantics, fresh
    revalidation, write-boundary markers, submission uncertainty, and
@@ -572,24 +624,26 @@ must pass its exit gate before the next mutation surface is enabled.
    reconciliation are all verified. Until then, the current bridge and
    `PENDING / NOT VERIFIED` status remain authoritative.
 
-6. **Phase 6 — Optional autonomous runtime cleanup [PLANNED / POST-JUDGING].**
-   Clean up the `AUTONOMOUS` mode runtime and make worker configuration
-   validation mode-aware so that Codex/App Server dependencies are not required
-   for modes that do not use them. Ensure `MCP_NATIVE` mode does not pull in
-   autonomous-only dependencies. Do not change code now; document the known
-   cleanup item for later implementation.
+6. **Phase 6 — AUTONOMOUS runtime cleanup and mode-aware dependencies
+   [PLANNED / POST-JUDGING].** Clean up the `AUTONOMOUS` mode runtime and
+   make worker configuration validation mode-aware so that Codex/App Server
+   dependencies are not required for modes that do not use them. Ensure
+   `HUMAN_APPROVAL` mode does not pull in autonomous-only dependencies
+   (LLM provider, direct Binance Spot API credentials for execution). Do not
+   change code now; document the known cleanup item for later implementation.
 
-   **Exit gate:** `MCP_NATIVE` mode starts without LLM provider configuration;
-   `AUTONOMOUS` mode requires LLM provider configuration; worker config
-   validation is mode-aware; no dead dependency paths in either mode.
+   **Exit gate:** `HUMAN_APPROVAL` mode starts without LLM provider
+   configuration; `AUTONOMOUS` mode requires LLM provider configuration;
+   worker config validation is mode-aware; no dead dependency paths in either
+   mode.
 
-7. **Phase 7 — Remote multi-host access [PLANNED / POST-JUDGING].** Support
-   compatible remote MCP hosts through authenticated remote MCP access. Define
-   caller identity and audit attribution, rate limiting, request and session
-   isolation, and session/token lifecycle behavior. Remote access must remain
-   stateless or durably coordinated across replicas; disconnecting a host must
-   not stop an already-running `AUTONOMOUS` agent. Implement only after local
-   MCP behavior is verified.
+7. **Phase 7 — Remote multi-host MCP access [PLANNED / POST-JUDGING].**
+   Support compatible remote MCP hosts through authenticated remote MCP access.
+   Define caller identity and audit attribution, rate limiting, request and
+   session isolation, and session/token lifecycle behavior. Remote access must
+   remain stateless or durably coordinated across replicas; disconnecting a
+   host must not stop an already-running `AUTONOMOUS` agent. Implement only
+   after local MCP behavior is verified.
 
    **Exit gate:** remote authentication/audience checks, identity attribution,
    token rotation/revocation, rate-limit enforcement, timeout behavior,
@@ -605,21 +659,24 @@ as applicable:
 - schema, redaction, pagination, timeout, rate-limit, and structured-error
   checks;
 - authenticated read access and denial of unauthenticated access;
-- owner authorization for control, approval, rejection, and configuration
-  mutations;
+- owner authorization for control, proposal submission, approval, rejection,
+  and configuration mutations;
 - stronger mutation authorization plus before/after audit readback for mandate,
   budget, mode, and universe changes;
+- proposal validation returning correct pass/reject with policy reasons;
+- durable proposal submission creating intent only after deterministic
+  admission, with idempotency and replay protection;
 - parity readback showing REST, web, and MCP use the same durable state and
   state-machine outcomes, with no duplicate policy in handlers;
 - concurrent duplicate/replay requests proving idempotency and no duplicate
   approval or financial work;
-- unchanged `AUTO_BOUNDED` behavior through direct Binance Spot API, including
+- unchanged `AUTONOMOUS` behavior through direct Binance Spot API, including
   deterministic authorization, fresh revalidation, write gating, and
   reconciliation;
 - real Binance Agent OS direct-SDK OAuth, discovery, read-only calls, tool
   calls, elicitation/confirmation, decline/cancel/expiry, submission-unknown,
   and reconciliation evidence;
-- mode-aware worker configuration validation proving `MCP_NATIVE` does not
+- mode-aware worker configuration validation proving `HUMAN_APPROVAL` does not
   require LLM provider or App Server dependencies;
 - multi-replica/load-balancer behavior with no critical MCP session, lock,
   approval, or confirmation state held only in process memory; and
