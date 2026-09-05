@@ -137,9 +137,9 @@ Public `GET /api/showcase` is available only in the PUBLIC LIVE SHOWCASE profile
 
 ## 9. Verification boundary
 
-- **IMPLEMENTED BUT NOT VERIFIED by a fresh runtime/browser exercise in this documentation-only review:** Docker demo, `/demo`, and public-enabled `/showcase` Chromium rendering.
+- **VERIFIED:** fresh non-financial Docker JUDGE DEMO, all demo scenario APIs, zero durable demo rows, and Chromium `/demo` rendering plus scenario selection.
 - **IMPLEMENTED:** AgentRuntime, policy, mode transports, durable approval/outbox, write markers, reconciliation, emergency stop, and safe-live closure.
 - **PENDING / NOT VERIFIED:** genuine authenticated Binance Agent OS/Codex acceptance.
-- **NOT VERIFIED:** funded AUTO_BOUNDED live order and full owner-control-panel browser acceptance.
+- **NOT VERIFIED:** PUBLIC LIVE SHOWCASE Chromium under its required live profile; funded AUTO_BOUNDED live order; full authenticated owner-control-panel acceptance.
 
 Stop only processes started for a run. Keep `backend/.env` untracked and never place credentials, cookies, OAuth codes, account values, or private URLs in the repository.

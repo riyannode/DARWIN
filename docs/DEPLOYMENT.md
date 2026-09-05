@@ -80,8 +80,9 @@ curl -i http://127.0.0.1:8000/health/ready
 
 | Claim | Status |
 | --- | --- |
-| Docker JUDGE DEMO | **IMPLEMENTED BUT NOT VERIFIED** by a fresh runtime exercise in this documentation-only review |
-| `/demo` and public-enabled `/showcase` Chromium rendering | **IMPLEMENTED BUT NOT VERIFIED** by a fresh Chromium exercise in this documentation-only review |
+| Docker JUDGE DEMO, all demo scenarios, and zero durable demo rows | **VERIFIED** in a fresh non-financial Compose run |
+| Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
+| Public-enabled `/showcase` Chromium rendering | **NOT VERIFIED** in this run |
 | Live process/transport implementation | **IMPLEMENTED** |
 | Funded direct Spot order | **NOT VERIFIED** |
 | Authenticated Binance Agent OS/Codex acceptance | **PENDING / NOT VERIFIED** |

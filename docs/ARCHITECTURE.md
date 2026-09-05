@@ -22,14 +22,21 @@ flowchart TD
     S --> P[AgentRuntime pair selection]
     P --> D[Selected-pair evidence]
     D --> M[AgentRuntime BUY / SELL / HOLD]
-    M --> G[Deterministic policy and budget]
+    M --> G[Decision-admission policy and budget]
     G --> W{Financial writes enabled?}
     W -->|No| N[FINANCIAL_WRITES_DISABLED]
-    W -->|Yes| X{Execution mode}
-    X -->|AUTO_BOUNDED| R[Direct Binance Spot API]
-    X -->|HUMAN_APPROVAL| H[Telegram or web approval + Codex / Binance Agent OS MCP]
-    R --> Q[Fresh revalidation, write marker, reconciliation]
-    H --> Q
+    W -->|Yes| X{Mode-specific authorization claim}
+    X -->|AUTO_BOUNDED| AA[AUTO_POLICY]
+    X -->|HUMAN_APPROVAL| HA[Telegram or web approval]
+    AA --> Q[Account lock + fresh evidence + current policy/budget revalidation]
+    HA --> Q
+    Q --> F{Final financial-write and applicable confirmation gates}
+    F -->|Blocked| K[Durable no-write state]
+    F -->|Allowed| T{External write transport}
+    T -->|AUTO_BOUNDED| R[Binance Spot API order write]
+    T -->|HUMAN_APPROVAL| H[Codex + Binance Agent OS MCP order write]
+    R --> J[Reconciliation + durable audit state]
+    H --> J
 ```
 
 ### Universe and evidence
@@ -41,6 +48,8 @@ Effective Universe = Configured Universe ∩ Allowed Symbols ∩ live-valid Bina
 ```
 
 A cycle uses live exchange metadata and required filters to derive that intersection. It fetches 10 closed candles for `15m` and `1h` for every effective candidate with bounded concurrency of eight. A failed candidate is excluded, recorded as a sanitized failure in that run's `pair_selection` evidence, and does not create a child run. If no candidate remains, the cycle completes as `NO_EFFECTIVE_SYMBOLS`.
+
+Configured-universe validation accepts up to 100 symbols. Candidate scanning processes the entire Effective Universe and is never silently truncated. A sufficiently large Effective Universe can exceed the worker's current 60-second cycle timeout; that cycle fails closed rather than creating a partial decision or silently reducing the candidate set.
 
 After pair selection, the final decision receives selected-pair-only current ticker, balances, open orders, recent activity, filters, Trading Mandate, policy/budget snapshots, and 48 closed candles each for `15m`, `1h`, and `4h`. Candidate history remains audit evidence and is not forwarded to the final model call.
 
@@ -116,7 +125,10 @@ The route reads persisted completed `SCHEDULED`/`RUN_ONCE` evidence. It neither 
 | Claim | Status |
 | --- | --- |
 | Runtime architecture, AgentRuntime, Pydantic validation, policy, transports, state machine, and public projection | **IMPLEMENTED** |
-| Zero-credential Docker demo and judge-facing browser routes | **IMPLEMENTED BUT NOT VERIFIED** by a fresh runtime/browser exercise in this documentation-only review |
+| Fresh non-financial Docker JUDGE DEMO: all three demo APIs and zero `agent_runs`/`trade_intents` rows | **VERIFIED** |
+| Fresh Chromium `/demo` rendering and scenario selection | **VERIFIED** |
+| Fresh unauthenticated Chromium shells for `/`, `/agent`, `/budget`, `/activity`, and `/settings` | **VERIFIED**; protected APIs returned expected `401` responses and no mutation was attempted |
+| PUBLIC LIVE SHOWCASE Chromium rendering with its required live profile | **NOT VERIFIED** |
 | Authenticated Binance Agent OS/Codex provider acceptance | **PENDING / NOT VERIFIED** |
 | Funded direct Binance Spot order | **NOT VERIFIED** |
 

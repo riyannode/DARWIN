@@ -38,8 +38,9 @@ The YouTube video is the stable demo reference. The Cloudflare Tunnel is a curre
 
 | Claim | Status |
 | --- | --- |
-| Zero-credential Docker judge demo and deterministic no-write behavior | **IMPLEMENTED BUT NOT VERIFIED** by a fresh runtime exercise in this documentation-only review |
-| `/demo` and public-enabled `/showcase` Chromium rendering | **IMPLEMENTED BUT NOT VERIFIED** by a fresh Chromium exercise in this documentation-only review |
+| Zero-credential Docker judge demo, all scenarios, and zero durable demo rows | **VERIFIED** in a fresh non-financial Compose run |
+| Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
+| Public-enabled `/showcase` Chromium rendering | **NOT VERIFIED** in this run |
 | AgentRuntime, Pydantic validation, direct Spot adapter, Binance Agent OS/Codex transport, policy, durable state, and reconciliation | **IMPLEMENTED** |
 | Funded `AUTO_BOUNDED` order | **NOT VERIFIED** |
 | Authenticated `HUMAN_APPROVAL` Binance Agent OS/Codex acceptance | **PENDING / NOT VERIFIED** |

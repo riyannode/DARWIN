@@ -169,8 +169,9 @@ curl -i http://127.0.0.1:8000/docs
 
 | Claim | Status |
 | --- | --- |
-| Demo Docker runtime and judge route | **IMPLEMENTED BUT NOT VERIFIED** by a fresh runtime exercise in this documentation-only review |
-| Public-enabled `/showcase` and `/demo` Chromium rendering | **IMPLEMENTED BUT NOT VERIFIED** by a fresh Chromium exercise in this documentation-only review |
+| Demo Docker runtime, all demo scenarios, and zero durable demo rows | **VERIFIED** in a fresh non-financial Compose run |
+| Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
+| Public-enabled `/showcase` Chromium rendering | **NOT VERIFIED** in this run |
 | Live configuration, worker, mode transport, and safety implementation | **IMPLEMENTED** |
 | Funded AUTO_BOUNDED execution | **NOT VERIFIED** |
 | Authenticated HUMAN_APPROVAL Codex/Binance Agent OS acceptance | **PENDING / NOT VERIFIED** |

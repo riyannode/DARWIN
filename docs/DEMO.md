@@ -71,7 +71,7 @@ The demo uses deterministic Binance-format fixtures and deterministic model deci
 
 ## Evidence status
 
-- **IMPLEMENTED BUT NOT VERIFIED by a fresh runtime/browser exercise in this documentation-only review:** Docker JUDGE DEMO, the port-3000 `/demo` path, demo API scenarios, zero-row financial-write proof, and Chromium rendering for `/demo`.
-- **NOT VERIFIED by this demo:** external LLM inference, Binance connectivity/authentication, Binance Agent OS/Codex OAuth, order submission, reconciliation against a funded account, or a funded live order.
+- **VERIFIED in a fresh non-financial Compose run:** Docker JUDGE DEMO, `GET /api/demo`, all three scenario endpoints, zero durable `agent_runs`/`trade_intents` rows, and Chromium rendering plus scenario selection for `/demo`.
+- **NOT VERIFIED by this run:** PUBLIC LIVE SHOWCASE under its required live profile; external LLM inference; Binance connectivity/authentication; Binance Agent OS/Codex OAuth; order submission; reconciliation against a funded account; or a funded live order.
 
 For safe live evidence rather than fixtures, see [LIVE.md](LIVE.md) and the optional PUBLIC LIVE SHOWCASE profile at `/showcase`.

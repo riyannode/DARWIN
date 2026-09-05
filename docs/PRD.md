@@ -65,7 +65,7 @@ Both modes use the same policy, account-scoped execution lock, idempotency, exte
 | Claim | Status |
 | --- | --- |
 | Runtime architecture and safety controls | **IMPLEMENTED** |
-| Docker judge demo | **IMPLEMENTED BUT NOT VERIFIED** by a fresh runtime exercise in this documentation-only review |
+| Docker judge demo, all scenarios, and zero durable demo rows | **VERIFIED** in a fresh non-financial Compose run |
 | Authenticated Binance Agent OS/Codex acceptance | **PENDING / NOT VERIFIED** |
 | Funded live execution | **NOT VERIFIED** |
 
