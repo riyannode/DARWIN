@@ -1,111 +1,72 @@
 # DARWIN product contract
 
-Give DARWIN a trading mandate and hard risk boundaries. DARWIN decides what,
-when, and how to trade within those limits.
-
-DARWIN is an autonomous Binance Spot decision and execution runtime. It monitors
-current market and account evidence, creates bounded trade intents, and supports
-an autonomous path without per-order human approval.
-
-## Required product
-
-One owner configures one high-level Spot Trading Mandate, a small structured
-execution policy, a rolling 24-hour BUY budget, and an operating mode. DARWIN
-produces typed BUY, SELL, or HOLD decisions. BUY/SELL become durable
-`TradeIntent` records. `AUTO_BOUNDED` executes through the bounded Spot API;
-`HUMAN_APPROVAL` is the secondary supervised alternative.
-
-## Configuration model
-
-The Trading Mandate is one required free-text field containing high-level
-trading objectives and preferences. It is strategy context for DARWIN and is
-never execution authority. The owner does not need to define separate assets,
-entry rules, sizing rules, exit rules, or exact trading logic.
-
-The hard backend guardrails are separate:
-
-- `allowed_symbols` is the exact owner-configured symbol allowlist;
-- `max_order_notional` is the maximum USDT notional for one trade;
-- `max_open_actionable_intents` is the maximum concurrent active trade workflow
-  count, not an open-position count;
-- the rolling 24-hour BUY budget is stored separately in `BudgetVersion`;
-- the configured Spot universe is persisted separately in
-  `AgentConfig.supported_symbols`, bootstrapping to `BTCUSDT`, `ETHUSDT`,
-  `BNBUSDT`, `SOLUSDT`, and `XRPUSDT`;
-- emergency stop remains backend-authoritative.
-
-Effective symbols are the intersection of the configured universe, allowed
-symbols, and currently valid Binance Spot/USDT metadata with required filters.
-Configured symbols do not automatically authorize trading. DARWIN scans every
-effective symbol with 10 closed `15m` and `1h` candles before pair selection,
-then fetches 48 closed candles for `15m`, `1h`, and `4h` only for the selected
-pair. The five-symbol bootstrap is not a runtime scan limit or top-five strategy.
+DARWIN is an autonomous Binance Spot decision and execution runtime. Give it a **Trading Mandate** and hard backend limits; it decides what, when, and how to trade only within those limits.
 
 ## Authority model
 
-- Trading Mandate text is strategy context only.
-- The model chooses the pair, BUY/SELL/HOLD action, quantity, order type, LIMIT
-  price when applicable, rationale, confidence, supporting factors, and risk
-  factors.
-- Structured symbols, notional, concurrency, budget, balances, filters,
-  freshness, open-order conflict, emergency stop, and execution authorization
-  remain deterministic backend authority.
-- `AUTO_BOUNDED` uses `AUTO_POLICY` authorization and does not require per-order
-  Telegram approval.
-- `HUMAN_APPROVAL` creates a supervised proposal and uses the approval flow.
-- BUY acquires a Spot asset. SELL sells a Spot asset already held by the
-  account. SELL is not a short-opening operation.
-- Futures, margin, leverage, transfers, withdrawals, and options are outside
-  DARWIN execution scope.
+The owner configures one free-text Trading Mandate plus deterministic controls:
+
+- **Allowed Symbols** — exact allowlist for the current mandate;
+- **Max Per Trade** — maximum USDT notional for one order;
+- **Max Concurrent Trades** — maximum active actionable workflows, not positions;
+- **24h Trading Budget** — a rolling BUY budget stored separately from the mandate;
+- **Configured Universe** — persisted Spot/USDT monitoring capability; and
+- **Emergency Stop** — backend-owned control that blocks ordinary new work.
+
+The mandate is strategy context, never execution authority. The model may propose a pair, action, quantity, order type, limit price, confidence, rationale, supporting factors, and risk factors. Backend policy decides whether a proposed financial write is permitted.
+
+## Universe
+
+A newly created Configured Universe defaults to:
+
+```text
+BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT
+```
+
+A database upgraded from before `0004_dual_execution_and_universe` can retain the migration's four-symbol compatibility value (`BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`) until the owner updates it. The universe can contain up to 100 distinct uppercase Spot/USDT symbols. The owner must pass live Spot metadata/filter validation to add a new symbol. The five bootstrap symbols are not a runtime ceiling or a ranking strategy.
+
+```text
+Effective Universe = Configured Universe ∩ Allowed Symbols ∩ live-valid Binance Spot/USDT symbols
+```
+
+## Decision contract
+
+DARWIN's custom `AgentRuntime` uses the OpenAI SDK and optional OpenAI-compatible `OPENAI_BASE_URL`. Pydantic validates strict pair-selection and decision output; Pydantic is not the agent framework.
+
+Each cycle:
+
+1. derives the Effective Universe;
+2. scans every effective candidate using 10 closed `15m` and `1h` candles;
+3. selects one pair;
+4. fetches selected-pair current ticker, balances, open orders, recent activity, filters, and 48 closed candles each for `15m`, `1h`, and `4h`;
+5. produces a typed `BUY`, `SELL`, or `HOLD`; and
+6. applies deterministic policy and either creates durable mode-specific work or completes with a safe no-write result.
+
+Candidate evidence supports selection and is retained for audit. Only selected-pair evidence reaches final decision generation. Historical bars inform a decision; they never authorize a trade.
 
 ## Modes
 
-- `AUTO_BOUNDED`: the primary autonomous path using the same deterministic
-  policy, account lock, fresh revalidation, idempotency, and reconciliation
-  flow, then the narrow backend-only Binance Spot API.
-- `HUMAN_APPROVAL`: the secondary supervised path using operator authorization,
-  fresh revalidation, and Codex Agent OS MCP transport.
+- **AUTO_BOUNDED:** `AUTO_POLICY` authorizes a policy-passing intent. It uses the direct backend-only **Binance Spot API** after fresh revalidation and does not need per-order Telegram/web approval or Codex OAuth.
+- **HUMAN_APPROVAL:** a policy-passing intent waits for a durable Telegram or web approval. After fresh revalidation, it uses Codex App Server and **Binance Agent OS** MCP. Codex does not choose a trade or override policy.
 
-Both modes are bounded by the configured Spot universe, allowed symbols,
-USDT-only Spot metadata, maximum notional, concurrent workflow limit, rolling
-BUY budget, balances, filters, open-order conflict, freshness, and emergency
-stop.
+Both modes use the same policy, account-scoped execution lock, idempotency, external-call marker, reconciliation, and audit trail.
 
-DARWIN reasons from current ticker/account/order evidence plus real typed
-CLOSED Binance Spot OHLCV. Candidate scanning uses 10 closed candles each for
-`15m` and `1h` across every effective symbol; detailed reasoning uses 48 closed
-candles each for `15m`, `1h`, and `4h` only for the selected pair. Historical
-bars inform BUY/SELL/HOLD reasoning, do not authorize trades, exclude the
-currently forming candle, and do not guarantee trend prediction.
+## Safety and failure contract
 
-Candidate history failures exclude only the affected symbol and are retained as
-sanitized structured logs plus original-cycle `pair_selection` evidence; they do
-not create child `AgentRun` rows. If every candidate fails validation, pair
-selection is skipped and the cycle returns a fail-closed no-candidate result.
+- Spot only: no futures, margin, leverage, options, transfers, or withdrawals.
+- A `SELL` may sell a held Spot asset only; it cannot open a short position.
+- Policy checks symbols, notional, active intents, 24-hour BUY budget, balances, Binance filters, freshness, open-order conflict, and emergency stop.
+- The financial-write setting is enforced at safe-live decision admission and again directly before external submission; `DEMO_MODE=true` always blocks financial writes.
+- A `SUBMISSION_UNKNOWN` or `SUBMITTING` state with a recorded external-call marker must reconcile before retry. The marker indicates ambiguity, not success.
+- Direct web cancellation and model cancellation are disabled. Emergency stop is the only operator cancellation path and is reconciled by durable work.
 
-## State and safety
+## Status boundary
 
-Approval is single-use with a backend TTL default of 90 seconds and bounds of
-30..180 seconds. Telegram callback data is only an opaque approval reference.
-The same durable approval state machine serves Telegram and web fallback.
+| Claim | Status |
+| --- | --- |
+| Runtime architecture and safety controls | **IMPLEMENTED** |
+| Docker judge demo, all scenarios, and zero durable demo rows | **VERIFIED** in a fresh non-financial Compose run |
+| Authenticated Binance Agent OS/Codex acceptance | **PENDING / NOT VERIFIED** |
+| Funded live execution | **NOT VERIFIED** |
 
-`APPROVAL_EXPIRED` means the operator decision window expired. Binance exchange
-`EXPIRED` remains an exchange-order terminal state. `SUBMISSION_UNKNOWN` always
-reconciles before retry. One account cannot perform concurrent ordinary writes.
-
-Emergency stop is the only special operator-command cancellation path. Model
-CANCEL/CANCEL_REPLACE, direct web cancellation, transfers, withdrawals, futures,
-margin, leverage, and options are unsupported or disabled.
-
-## Verification status
-
-```text
-Codex/Binance transport implementation: IMPLEMENTED
-Authenticated live bridge verification: PENDING
-Production readiness: PARTIALLY VERIFIED
-```
-
-Manual operator verification is required for genuine Codex OAuth, authenticated
-MCP status/tool inventory, harmless structured reads, and the real write
-confirmation contract. The first write confirmation must be declined and proven
-to create zero trade.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for implementation detail and [RUNBOOK.md](RUNBOOK.md) for operator procedures.

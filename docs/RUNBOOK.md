@@ -1,87 +1,45 @@
 # DARWIN Runbook
 
-This runbook starts DARWIN safely before operator Binance/Codex OAuth. It never
-asks the agent to handle Binance credentials, cookies, bearer tokens, or 2FA.
+This runbook describes the current operational contract. It does not authorize deployment, restart, credential creation, a funded order, or a live provider confirmation.
 
-## Verification boundary
+## 1. Choose the profile
 
-Current implementation status:
+| Goal | Profile | Result |
+| --- | --- | --- |
+| Judge walkthrough | JUDGE DEMO | Synthetic data, no external LLM, no Binance connection, no financial writes. Run `docker compose up --build`, then open `/demo`. |
+| Public evidence | PUBLIC LIVE SHOWCASE | Real model and Binance evidence, scheduled worker, read-only `/showcase`, financial writes closed. |
+| Operator-controlled trade execution | REAL LIVE TRADING | Financial writes deliberately enabled, subject to all policy and mode gates. |
 
-```text
-Codex/Binance transport implementation: IMPLEMENTED
-Authenticated live bridge verification: PENDING
-Production readiness: PARTIALLY VERIFIED
-```
+See [LIVE.md](LIVE.md) for exact flags and configuration.
 
-Verified without Binance login: migrations, deterministic policy, approval and
-outbox state, Codex App Server initialize/status handling, unauthenticated write
-blocking, bounded public Binance `/api/v3/klines` mapping and decision evidence,
-backend checks, frontend build, and local API/Chromium behavior where configured.
-
-## 1. Install
-
-Requirements are the versions locked by the repository: Python 3.14.x, uv,
-Node.js, pnpm 11.25.0, and PostgreSQL for production-like state.
+## 2. Install and configure live prerequisites
 
 ```bash
 cd backend
 uv sync --frozen
+cp .env.example .env
+
 cd ../frontend
 pnpm install --frozen-lockfile
-cd ..
 ```
 
-If pnpm reports an ignored build script, approve only the exact package it
-reports, then rerun `pnpm install --frozen-lockfile`.
+For live state, set a PostgreSQL `DATABASE_URL`, an Argon2id `OWNER_PASSWORD_HASH`, `OPENAI_API_KEY`, `OPENAI_MODEL`, and exact `FRONTEND_ORIGIN` in `backend/.env`. Then select the mode-specific configuration:
 
-## 2. Configure backend
+- `AUTO_BOUNDED`: `BINANCE_API_KEY` and `BINANCE_API_SECRET` for the direct Binance Spot API.
+- `HUMAN_APPROVAL`: `TOKEN_ENCRYPTION_KEY`, Codex App Server configuration, and genuine Binance Agent OS OAuth.
 
-```bash
-cp backend/.env.example backend/.env
-chmod 600 backend/.env
-```
-
-Set `DATABASE_URL`, owner password hash, `OPENAI_API_KEY`,
-`TOKEN_ENCRYPTION_KEY`, and exact `FRONTEND_ORIGIN`. DARWIN can start with
-Codex/Binance auth pending.
-
-Default transport configuration:
-
-```dotenv
-BINANCE_AGENT_OS_TRANSPORT=codex
-CODEX_APP_SERVER_COMMAND=codex app-server --stdio
-CODEX_APP_SERVER_VERSION=0.153.0
-CODEX_WRITE_CONFIRMATION_VERIFIED=false
-APPROVAL_TTL_SECONDS=90
-SIGNAL_COOLDOWN_SECONDS=300
-```
-
-Do not set `CODEX_WRITE_CONFIRMATION_VERIFIED=true` until the manual operator
-verification has observed the real Codex/Binance confirmation contract.
-
-For Telegram, configure all four values together:
-
-```dotenv
-TELEGRAM_BOT_TOKEN=<backend-only bot token>
-TELEGRAM_OPERATOR_CHAT_ID=<exact chat id>
-TELEGRAM_OPERATOR_USER_ID=<exact user id>
-TELEGRAM_WEBHOOK_SECRET=<Telegram secret token>
-```
-
-No Telegram secret belongs in frontend environment variables.
+Optional Telegram must be a complete group of `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OPERATOR_CHAT_ID`, `TELEGRAM_OPERATOR_USER_ID`, and `TELEGRAM_WEBHOOK_SECRET`.
 
 ## 3. Migrate
+
+The checked-in Alembic head is `0006_canonical_trading_mandate`, not `0003_approval_outbox`.
 
 ```bash
 cd backend
 PYTHONPATH=src uv run alembic upgrade head
 ```
 
-The current migration is `0003_approval_outbox`. It adds structured mandate
-policy, bounded intent evidence, durable approvals, and the PostgreSQL work
-outbox. Migration downgrade/upgrade is reversible for controlled maintenance.
-
-## 4. Start API, worker, and frontend
+## 4. Run the three live processes
 
 API:
 
@@ -105,96 +63,56 @@ BACKEND_URL=http://127.0.0.1:8000 pnpm build
 HOSTNAME=127.0.0.1 PORT=3000 pnpm start
 ```
 
-The worker remains alive when Codex reports `AUTH_REQUIRED`; it records the
-failure/retry state and performs no fabricated Binance read or write.
+The worker is required for scheduled cycles and durable outbox work. It validates model configuration and records provider/auth failures without fabricating Binance state. FastAPI without the worker is not a complete live operation.
 
-## 5. Configure DARWIN
+## 5. Configure DARWIN as owner
 
-1. Sign in as the owner.
-2. Set one required high-level Trading Mandate.
-3. Set exact allowed symbols, Max Per Trade, and Max Concurrent Trades.
-4. Set the rolling 24-hour BUY budget.
-5. Configure the persisted Spot universe. It bootstraps to `BTCUSDT`, `ETHUSDT`,
-   `BNBUSDT`, `SOLUSDT`, and `XRPUSDT`; this is not a runtime limit or top-five
-   strategy. Add/remove valid Spot/USDT symbols as needed; adding a symbol here
-   does not authorize it in the mandate.
-6. Choose `AUTO_BOUNDED` for autonomous execution without per-order approval,
-   or `HUMAN_APPROVAL` for supervised execution through Codex Agent OS.
-7. Confirm the UI shows Codex `AUTH_REQUIRED`/`UNVERIFIED` until manual setup.
+1. Sign in at an owner control-panel route.
+2. Set one Trading Mandate, Allowed Symbols, Max Per Trade, and Max Concurrent Trades.
+3. Set the rolling 24h Trading Budget.
+4. Review the Configured Universe. A newly created configuration bootstraps to `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`, and `XRPUSDT`; it can hold up to 100 valid Spot/USDT symbols. A database upgraded from before `0004_dual_execution_and_universe` can retain that migration's four-symbol compatibility value (`BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`) until an owner updates it.
+5. Remember that configuration is not authorization:
 
-## 6. Telegram webhook
+   ```text
+   Effective Universe = Configured Universe ∩ Allowed Symbols ∩ live-valid Binance Spot/USDT symbols
+   ```
 
-Telegram has no official sandbox. Use a dedicated test bot and private test
-chat when performing real Bot API verification.
+6. Select `AUTO_BOUNDED` for direct bounded Spot API execution without per-order approval, or `HUMAN_APPROVAL` for the durable Telegram/web approval flow and Codex + Binance Agent OS MCP transport.
+7. Start scheduled operation only after the displayed transport state and profile flags match the intended mode.
 
-The deployed HTTPS webhook URL is:
+## 6. Normal decision and execution path
 
 ```text
-https://<frontend-origin>/api/integrations/telegram/webhook
+Effective Universe
+  -> candidate scan: closed 15m + 1h evidence for every candidate
+  -> AgentRuntime selects one pair
+  -> selected-pair ticker, balances, orders, activity, filters, closed 15m/1h/4h evidence
+  -> typed BUY / SELL / HOLD
+  -> deterministic policy, budget, freshness, and emergency-stop checks
+  -> financial-write gate
+  -> HUMAN_APPROVAL: Telegram or web authorization -> Codex / Binance Agent OS MCP
+     AUTO_BOUNDED: AUTO_POLICY -> direct Binance Spot API
+  -> fresh revalidation, account lock, write marker, submission, reconciliation
 ```
 
-Configure Telegram’s Bot API webhook with the exact `secret_token` matching
-`TELEGRAM_WEBHOOK_SECRET`. The webhook accepts only callback queries from the
-configured user ID and chat ID.
+Candidate scans use 10 closed `15m` and `1h` candles per effective symbol. Final selected-pair evidence uses 48 closed candles for `15m`, `1h`, and `4h`. Candidate failures exclude only the failed symbol and are persisted in original-cycle evidence. No candidate set produces `NO_EFFECTIVE_SYMBOLS` with no financial work.
 
-Callbacks contain only:
+Approval cannot change the symbol, side, quantity, price, or final Binance arguments. The approval TTL defaults to 90 seconds and is bounded to 30–180 seconds. Duplicate Telegram/web decisions are idempotent.
 
-```text
-approve:<approval_id>
-reject:<approval_id>
-```
+## 7. Emergency stop and uncertain submission
 
-The backend resolves the approval server-side, checks PENDING/unexpired state,
-and atomically pairs the approval and intent transition. Duplicate callbacks
-are idempotent; unauthorized callbacks fail closed.
+Emergency stop blocks new ordinary proposals and claims, records affected work, and queues reconciled cancellation for applicable known orders. Direct web cancellation and model cancellation are disabled.
 
-## 7. Normal runtime
+For `SUBMISSION_UNKNOWN`, or `SUBMITTING` with an external-call marker:
 
-```text
-DecisionCycle
-  -> lightweight Spot/USDT market universe and effective intersection
-  -> bounded 15m/1h candidate history for every effective symbol
-  -> one selected pair
-  -> selected-pair current ticker + 15m/1h/4h closed OHLCV + account evidence
-  -> DARWIN BUY/SELL/HOLD
-  -> deterministic policy gate
-  -> HUMAN_APPROVAL: WAITING_FOR_APPROVAL + Telegram outbox
-     AUTO_BOUNDED: AUTO_POLICY authorization + execution outbox
-  -> account-scoped PostgreSQL lock
-  -> fresh revalidation
-  -> HUMAN_APPROVAL: operator authorization + Codex transport
-     AUTO_BOUNDED: direct Binance Spot API
-  -> optional observed confirmation for HUMAN_APPROVAL
-  -> exact write only when the selected path allows it
-  -> reconciliation + Telegram receipt
-```
+1. do not retry the financial call;
+2. reconcile by stored Binance order identifier or the same client idempotency key;
+3. persist the authoritative result; and
+4. only then consider later recovery.
 
-Reject and expiry are no-write terminal states. Approval never mutates symbol,
-side, quantity, price, or final Binance arguments.
+An external-call marker indicates possible boundary crossing, not a successful order.
 
-Candidate scanning is count-independent and uses the complete effective set,
-up to the existing configured-universe validation maximum of 100 symbols. Each
-candidate receives 10 closed candles for `15m` and `1h`; no `4h` candidate scan
-or 48-candle candidate fetch is performed. A failed candidate is excluded and
-recorded as sanitized structured logs and original-cycle `pair_selection`
-evidence, not child runs. If all candidates fail, no pair selection
-or financial work occurs. Final detail remains 48 closed candles for each
-`15m`, `1h`, and `4h` interval for only the selected pair.
-
-## 8. Emergency stop
-
-The authenticated owner emergency-stop control:
-
-- stops new proposals and ordinary execution claims;
-- records exact targeted intent/order IDs;
-- queues narrow emergency cancellation work;
-- uses account serialization and reconciliation;
-- leaves orders `CANCEL_PENDING` until a terminal exchange state is observed.
-
-Model cancellation and direct web cancellation are disabled. Transfers and
-withdrawals remain unsupported.
-
-## 9. Health and status
+## 8. Health and status
 
 ```bash
 curl -i http://127.0.0.1:8000/health/live
@@ -202,69 +120,26 @@ curl -i http://127.0.0.1:8000/health/ready
 curl -i http://127.0.0.1:8000/docs
 ```
 
-After owner login, inspect:
+Owner inspection routes include:
 
 ```text
+GET /api/agent
+GET /api/budget
+GET /api/portfolio
+GET /api/activity
+GET /api/integrations/binance/status
+GET /api/integrations/binance-api/status
 GET /api/integrations/codex/status
 GET /api/integrations/telegram/status
-GET /api/activity
-GET /api/budget
 ```
 
-Codex status must be shown as `UNVERIFIED` until the manual live bridge gate
-passes, even if App Server initialization itself succeeds.
+Public `GET /api/showcase` is available only in the PUBLIC LIVE SHOWCASE profile. Demo API routes are available only in JUDGE DEMO.
 
-## 10. Deferred manual verification
+## 9. Verification boundary
 
-Perform later with genuine operator interaction:
+- **VERIFIED:** fresh non-financial Docker JUDGE DEMO, all demo scenario APIs, zero durable demo rows, and Chromium `/demo` rendering plus scenario selection.
+- **IMPLEMENTED:** AgentRuntime, policy, mode transports, durable approval/outbox, write markers, reconciliation, emergency stop, and safe-live closure.
+- **PENDING / NOT VERIFIED:** genuine authenticated Binance Agent OS/Codex acceptance.
+- **NOT VERIFIED:** PUBLIC LIVE SHOWCASE Chromium under its required live profile; funded AUTO_BOUNDED live order; full authenticated owner-control-panel acceptance.
 
-1. Run genuine Codex-managed Binance OAuth.
-2. Confirm authenticated `mcpServerStatus/list`.
-3. Confirm populated Binance tool inventory.
-4. Run an exact harmless read-only `mcpServer/tool/call` and inspect the
-   structured result.
-5. Create a bounded DARWIN TradeIntent and approve it through Telegram.
-6. Observe the exact Binance/Codex write confirmation/elicitation.
-7. Do not auto-answer it. Decline it.
-8. Verify zero Binance trade was created.
-9. Only after that, deliberately verify any controlled approved write.
-
-If any step cannot be performed, keep the status `PENDING` and do not claim
-production readiness.
-
-## 11. Troubleshooting
-
-### Codex `AUTH_REQUIRED`
-
-Expected before manual OAuth. Do not put credentials into DARWIN. Complete the
-operator Codex login later, then recheck `mcpServerStatus/list` and tools.
-
-### Telegram proposal not delivered
-
-Inspect the activity notification state and outbox retry state. An approval
-row may exist while delivery is pending/failed; that never means the operator
-was notified and never enables execution automatically.
-
-### `SUBMISSION_UNKNOWN`
-
-Do not retry blindly. Reconciliation by stored Binance order ID or the same
-client idempotency key must resolve the external state first.
-
-### Frontend build dependency gate
-
-Approve only the named pnpm package reported by the build-policy prompt. Do not
-approve unrelated scripts.
-
-## 12. Stop services
-
-Stop only processes started for this run with `Ctrl+C` or their tracked process
-IDs. Leave shared PostgreSQL running unless it was started exclusively for this
-run.
-
-Final check:
-
-```bash
-git status --short --branch
-```
-
-The worktree must be clean and `backend/.env` must remain untracked.
+Stop only processes started for a run. Keep `backend/.env` untracked and never place credentials, cookies, OAuth codes, account values, or private URLs in the repository.

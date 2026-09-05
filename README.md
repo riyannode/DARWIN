@@ -1,17 +1,10 @@
 # DARWIN
 
-> Give DARWIN a trading mandate and hard risk boundaries. DARWIN decides what,
-> when, and how to trade within those limits.
+DARWIN is an owner-operated Binance Spot trading agent. The owner supplies a **Trading Mandate** and deterministic risk limits; DARWIN's custom `AgentRuntime` selects a pair and returns a typed `BUY`, `SELL`, or `HOLD` decision. The backend—not the model or frontend—authorizes every possible financial write.
 
-DARWIN is an owner-operated Binance Spot trading agent. A model can choose a
-pair and return a typed `BUY`, `SELL`, or `HOLD` decision, while backend policy,
-budget, freshness, balance, symbol filters, concurrency, and execution-mode
-checks remain the authorization source.
+## Judge Quickstart — zero credentials
 
-## Judge Quickstart
-
-The fastest way to inspect DARWIN is the deterministic, zero-credential Demo
-Mode runtime:
+Requirements: Git, Docker Engine, and Docker Compose v2.
 
 ```bash
 git clone https://github.com/riyannode/DARWIN.git
@@ -19,185 +12,122 @@ cd DARWIN
 docker compose up --build
 ```
 
-Open:
+Open [http://localhost:3000/demo](http://localhost:3000/demo). This local Docker route remains the canonical reproducible judge path.
 
-```text
-http://localhost:3000/demo
-```
+A stable walkthrough is available on [YouTube](https://youtu.be/HrpbPH4EQ4w). It is a demonstration reference, not a replacement for the local reproducible path.
 
-No `.env` is required. The root Compose runtime sets `DEMO_MODE=true` and uses
-local SQLite. It does not require or use:
+The checked-in root `docker-compose.yml` is deliberately the **JUDGE DEMO** profile:
 
-- an OpenAI key or other model-provider key;
-- Binance credentials or a funded account;
-- Codex authentication or Binance Agent OS OAuth;
-- Telegram configuration.
+- no `.env`, model-provider credential, Binance credential, Codex authentication, Telegram configuration, or funded account is required;
+- Alembic runs against local SQLite, then the backend and frontend start;
+- deterministic synthetic Binance-format fixtures replace external market/account/model providers;
+- no external LLM call or Binance connection occurs; and
+- `DEMO_MODE=true` blocks financial writes before an order, cancellation, transfer, or withdrawal transport can be reached.
 
-The runtime uses deterministic synthetic Binance-format fixtures, makes no live
-Binance connection, makes no LLM API call, and blocks financial writes in the
-backend before any execution transport can be reached.
+The demo exposes three backend-computed scenarios:
 
-The three scenarios are:
-
-| Scenario | Decision | Policy | System outcome |
+| Scenario | Model decision | Deterministic result | System outcome |
 | --- | --- | --- | --- |
 | `valid-buy` | `BUY BTCUSDT` | `PASS` | `SKIPPED / DEMO_EXECUTION_BLOCKED` |
-| `max-notional` | `BUY SOLUSDT` | `REJECTED` (policy-rejected) / `MAX_ORDER_NOTIONAL` | `SKIPPED` |
+| `max-notional` | `BUY SOLUSDT` | `REJECTED / MAX_ORDER_NOTIONAL` | `SKIPPED` |
 | `hold` | `HOLD ETHUSDT` | `NOT_APPLICABLE` | `SKIPPED / NO_TRADE` |
 
-Stop and reset the judge runtime:
+Stop and reset only this demo runtime:
 
 ```bash
 docker compose down -v --remove-orphans
 ```
 
-## Three runtime profiles
+## Runtime profiles
 
-DARWIN supports two judge-facing proof paths and one operator-controlled trading
-profile. The flags are an explicit final authorization layer; they do not bypass
-policy, budget, emergency stop, HUMAN_APPROVAL, Codex confirmation, or transport
-checks.
+| Profile | Required flags | Evidence and write behavior |
+| --- | --- | --- |
+| **JUDGE DEMO** | `DEMO_MODE=true`, `FINANCIAL_WRITES_ENABLED=false`, `PUBLIC_SHOWCASE_ENABLED=false` | Synthetic, zero credentials, no external LLM, no Binance connection, no financial writes. The judge route is `/demo`. |
+| **PUBLIC LIVE SHOWCASE** | `DEMO_MODE=false`, `FINANCIAL_WRITES_ENABLED=false`, `PUBLIC_SHOWCASE_ENABLED=true` | Real model inference and real Binance evidence are persisted by the scheduled worker and projected read-only at `/showcase`. Financial writes stop before an intent or proposal is created. |
+| **REAL LIVE TRADING** | `DEMO_MODE=false`, `FINANCIAL_WRITES_ENABLED=true`, normally `PUBLIC_SHOWCASE_ENABLED=false` | Operator-controlled execution remains subject to deterministic authorization, fresh revalidation, reconciliation, and the configured execution mode. |
 
-### JUDGE DEMO
+`FINANCIAL_WRITES_ENABLED` is enforced twice: as safe-live admission closure after evidence/model/policy evaluation (before intent creation) and again immediately before an external financial write. It never bypasses the Trading Mandate, policy, budget, emergency stop, freshness, idempotency, or applicable mode-specific authorization and transport checks. `DEMO_MODE=true` always wins.
 
-```dotenv
-DEMO_MODE=true
-FINANCIAL_WRITES_ENABLED=false
-PUBLIC_SHOWCASE_ENABLED=false
-```
+The repository contains no production deployment manifest or permanent hosted-runtime URL. `/showcase` is a deployment-relative public route, available only when the PUBLIC LIVE SHOWCASE profile is intentionally enabled. A currently available [temporary public read-only showcase](https://velvet-dow-milwaukee-commitment.trycloudflare.com/showcase) is provided through Cloudflare Tunnel; it is not a permanent production deployment and may expire.
 
-This is the root Docker Compose runtime: deterministic synthetic fixtures, zero
-credentials, no external LLM, no live Binance market reads, and financial writes
-blocked. Open `http://localhost:3000/demo`.
+## Interfaces and routes
 
-### PUBLIC LIVE SHOWCASE
+The Next.js application has one shell with these routes:
 
-```dotenv
-DEMO_MODE=false
-FINANCIAL_WRITES_ENABLED=false
-PUBLIC_SHOWCASE_ENABLED=true
-```
+| Route | Surface | Access |
+| --- | --- | --- |
+| `/demo` | deterministic judge walkthrough | public only in JUDGE DEMO |
+| `/showcase` | stored safe-live evidence and recent decisions | public only in PUBLIC LIVE SHOWCASE |
+| `/` | account overview, allocation, live balances, and latest decision | owner control panel |
+| `/agent` | Trading Mandate, mode, start/stop, and run-once controls | owner control panel |
+| `/budget` | rolling 24-hour BUY budget | owner control panel |
+| `/activity` | decision, intent, order-event, and audit timeline | owner control panel |
+| `/settings` | Binance Agent OS/Codex status, direct Spot status, and Configured Universe | owner control panel |
 
-This uses the real model, real Binance public market evidence, and the real
-scheduled worker path. A full `AUTO_BOUNDED` decision cycle also requires
-authenticated Binance account reads for balances, open orders, trade activity,
-and symbol filters. Persisted AgentRun evidence is projected through the public
-read-only `http://localhost:3000/showcase` page without exposing private balances.
-Financial writes are disabled; a policy-passing BUY/SELL completes locally as
-`FINANCIAL_WRITES_DISABLED` before any intent or proposal is created. No Binance
-order is created. Judges do not need owner credentials to inspect the showcase;
-operator configuration and mutations remain private.
+Owner mutations require an owner session and CSRF validation. The public showcase is a separate read-only projection; it excludes sessions, credentials, OAuth material, Telegram identifiers, provider headers, private balances, and hidden reasoning.
 
-### REAL LIVE TRADING
+## Current architecture
 
-```dotenv
-DEMO_MODE=false
-FINANCIAL_WRITES_ENABLED=true
-PUBLIC_SHOWCASE_ENABLED=false
-```
+DARWIN uses a custom `AgentRuntime`; Pydantic is used for typed model-output validation, not as an agent framework.
 
-Recommended operator profile for real model/Binance operation. Financial
-execution may proceed only after the existing deterministic policy, budget,
-emergency-stop, HUMAN_APPROVAL/Codex confirmation, revalidation, and transport
-gates pass. Funded E2E execution is not claimed as verified here.
+1. The worker computes the **Effective Universe** from the **Configured Universe** ∩ **Allowed Symbols** ∩ currently valid Binance Spot/USDT symbols with required filters.
+2. It scans every effective candidate with bounded closed `15m` and `1h` OHLCV evidence, then `AgentRuntime.choose_pair()` selects one pair.
+3. The final model call receives only selected-pair evidence: current ticker, closed `15m`/`1h`/`4h` history, balances, open orders, recent activity, filters, Trading Mandate, policy, and budget.
+4. `AgentRuntime.decide()` validates a typed `BUY`, `SELL`, or `HOLD` object with confidence, rationale, supporting factors, and risk factors.
+5. Deterministic backend policy evaluates symbols, per-trade notional, 24-hour BUY budget, active workflows, balances, Binance filters, evidence freshness, open-order conflict, and emergency stop.
+6. A permitted actionable decision either creates durable work for the selected mode or completes as a safe no-write outcome when the global write gate is closed.
 
-## Demo versus Live
+The OpenAI SDK supports direct OpenAI or an OpenAI-compatible endpoint through `OPENAI_BASE_URL`. A malformed or schema-invalid model response fails closed after one correction attempt.
 
-The root `docker-compose.yml` remains the safe JUDGE DEMO runtime. It is not the
-production live deployment. See [docs/LIVE.md](docs/LIVE.md) for the complete
-credential matrix and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for topology.
+For the full contract, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## AUTO_BOUNDED vs HUMAN_APPROVAL
+## Trading universe
 
-| Mode | Behavior | Execution transport | Per-order approval |
-| --- | --- | --- | --- |
-| `AUTO_BOUNDED` | Executes only after backend policy and fresh revalidation pass | Binance Spot API | Not required |
-| `HUMAN_APPROVAL` | Creates a proposal and waits for supervised authorization | Codex App Server + Binance Agent OS MCP | Required |
-
-Telegram notification is not financial authorization. HUMAN_APPROVAL also
-supports web approval; AUTO_BOUNDED does not require Telegram approval.
-
-## Verification Status
-
-Current repository verification status:
-
-- **Demo/Judge Docker runtime:** VERIFIED.
-- **Exact `http://localhost:3000/demo` and
-  `http://localhost:3000/api/demo/scenarios` path:** VERIFIED on a clean host
-  port-3000 re-test.
-- **Scenario count and SQLite zero-row write proof:** VERIFIED.
-- **Judge-facing `/demo` and public-enabled `/showcase` Chromium rendering:** VERIFIED.
-- **Full operator/control-room browser acceptance:** NOT CLAIMED / not exhaustively verified.
-- **AUTO_BOUNDED funded live execution:** NOT VERIFIED; no funded order was
-  submitted.
-- **HUMAN_APPROVAL authenticated Codex/Binance live acceptance:** PENDING /
-  NOT VERIFIED.
-
-This repository does not claim fully production-verified live trading.
-
-## Safety Model
-
-The backend owns trusted decisions:
-
-- Trading Mandate, configured universe, allowed symbols, and their effective
-  intersection;
-- Max Per Trade, rolling 24-hour BUY Budget, and Max Concurrent Trades;
-- balances, symbol filters, freshness, open-order conflicts, and emergency stop;
-- durable idempotent intents, state transitions, and reconciliation;
-- fresh revalidation before a possible write;
-- `SUBMISSION_UNKNOWN` handling;
-- Spot-only execution, with transfers and withdrawals unsupported.
-
-A `HOLD` is a model decision. `SKIPPED` is a system outcome. A skipped demo BUY
-is never an executed order.
-
-## Architecture
-
-```mermaid
-flowchart TD
-    M[Trading Mandate] --> E[Effective Universe]
-    U[Configured Universe] --> E
-    G[Hard Guardrails] --> E
-    E --> C[Closed OHLCV scan]
-    C --> D[BUY / SELL / HOLD decision]
-    D --> P[Deterministic policy and budget]
-    P --> AB[AUTO_BOUNDED / Binance Spot API]
-    P --> HA[HUMAN_APPROVAL / Codex + Agent OS MCP]
-    AB --> R[Reconciliation]
-    HA --> R
-    R --> T[Durable audit state]
-```
-
-The production pipeline and both execution modes share typed evidence and
-backend policy. Codex is an authentication/transport adapter; it does not
-choose trades or override policy.
-
-## Live Setup
-
-For local installation of the API, required worker, frontend, and mode-specific
-credentials, follow [docs/LIVE.md](docs/LIVE.md). The short shape is:
-
-```bash
-cd backend
-uv sync --frozen
-cp .env.example .env
-PYTHONPATH=src uv run alembic upgrade head
-PYTHONPATH=src uv run uvicorn darwinspot.main:app --host 0.0.0.0 --port 8000
-```
-
-The worker is a separate required process:
-
-```bash
-cd backend
-PYTHONPATH=src uv run python -m darwinspot.worker
-```
-
-Starting FastAPI without the worker is not a complete live deployment.
-
-## Repository Structure
+A newly created **Configured Universe** bootstraps to:
 
 ```text
-frontend/  Next.js operator and judge interfaces
-backend/   FastAPI API, worker, policy, transports, and persistence
-docs/      architecture, deployment, demo, live setup, and runbooks
+BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, XRPUSDT
 ```
+
+A database upgraded from before migration `0004_dual_execution_and_universe` can retain that migration's four-symbol compatibility value (`BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`) until its owner updates the persisted universe. Review it explicitly after upgrade.
+
+The universe is configurable by an owner to up to 100 uppercase Spot/USDT symbols. New symbols are checked against current Binance Spot metadata and required filters before being saved. A configured symbol is not automatically authorized by a Trading Mandate.
+
+```text
+Effective Universe = Configured Universe ∩ Allowed Symbols ∩ live-valid Binance Spot/USDT symbols
+```
+
+The bootstrap five are neither a dynamic ranking nor a five-pair runtime limit.
+
+## Execution modes
+
+| Mode | Authorization | Transport | Per-order human approval |
+| --- | --- | --- | --- |
+| `AUTO_BOUNDED` | `AUTO_POLICY` after deterministic policy and fresh revalidation | direct, backend-only **Binance Spot API** | no |
+| `HUMAN_APPROVAL` | durable Telegram or web approval, then fresh revalidation | Codex App Server + **Binance Agent OS** MCP | yes |
+
+Both paths use the same policy, account-scoped execution lock, idempotency key, final write marker, reconciliation, and audit trail. Codex does not decide trades and does not override backend policy. `AUTO_BOUNDED` does not require Codex OAuth or Telegram approval.
+
+## Safety model
+
+- Spot only: no futures, margin, leverage, options, transfers, or withdrawals.
+- A `SELL` can sell only a held Spot asset; it cannot open a short position.
+- The backend evaluates budget, balances, filters, freshness, open-order conflict, and emergency stop before a write can be considered.
+- New ordinary work is blocked by emergency stop. Model cancellation and direct web cancellation are disabled; emergency-stop cancellation is reconciled through the worker.
+- Financial writes use durable intent state, idempotency, an external-call marker, and reconciliation. `SUBMISSION_UNKNOWN` is reconciled before any retry; a marker never proves success.
+- Telegram is notification and an optional HUMAN_APPROVAL delivery channel, not authorization for `AUTO_BOUNDED`.
+
+## Verification status
+
+| Claim | Status |
+| --- | --- |
+| Docker JUDGE DEMO, all three demo scenarios, and zero durable `agent_runs`/`trade_intents` rows | **VERIFIED** in a fresh non-financial Compose run |
+| Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
+| Unauthenticated Chromium shell routes `/`, `/agent`, `/budget`, `/activity`, and `/settings` | **VERIFIED**; protected APIs correctly returned `401` and no mutation was attempted |
+| Public-enabled `/showcase` Chromium rendering | **NOT VERIFIED** in this run |
+| Custom AgentRuntime, typed validation, dual transports, policy, persistence, reconciliation, and public projection | **IMPLEMENTED** |
+| Full owner control-panel Chromium acceptance | **NOT VERIFIED** in the repository evidence reviewed for this update |
+| Funded `AUTO_BOUNDED` live order | **NOT VERIFIED** |
+| Authenticated `HUMAN_APPROVAL` Codex/Binance Agent OS acceptance | **PENDING / NOT VERIFIED** |
+
+See [docs/DEMO.md](docs/DEMO.md), [docs/LIVE.md](docs/LIVE.md), [docs/RUNBOOK.md](docs/RUNBOOK.md), and [docs/SUBMISSION.md](docs/SUBMISSION.md) for reproduction and reviewer detail.
