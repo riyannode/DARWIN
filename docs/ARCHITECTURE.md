@@ -327,8 +327,10 @@ MCP/human-confirmed workflows. For `HUMAN_APPROVAL`, DARWIN will connect
 directly to the Binance Agent OS MCP endpoint as an MCP client using the
 **official MCP Python SDK**. The outbound client owns transport, OAuth, tool
 discovery, tool invocation, and protocol elicitation/confirmation handling.
-DARWIN still owns the decision, mandate, deterministic policy, approval state
-machine, financial-write gate, submission uncertainty, and reconciliation.
+The external MCP host owns reasoning and proposal generation. DARWIN still owns
+financial authorization, mandate enforcement, deterministic policy, approval
+state machine, financial-write gating, submission uncertainty, reconciliation,
+durable state, and audit.
 
 The current Codex-specific App Server bridge remains the active implementation
 seam documented above. It is planned for removal only after direct OAuth, tool
