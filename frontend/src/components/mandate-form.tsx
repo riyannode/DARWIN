@@ -53,8 +53,7 @@ export function MandateForm({ mandate }: MandateFormProps) {
           required
         />
         <span className="muted">
-          Describe how you want DARWIN to approach trading. DARWIN decides the pair, timing, side,
-          size, and order type within the hard limits below.
+          Describe the trading approach. DARWIN chooses pair, timing, side, size, and order type within the limits below.
         </span>
       </label>
       <label>
@@ -93,7 +92,7 @@ export function MandateForm({ mandate }: MandateFormProps) {
           required
         />
         <span className="muted">
-          Maximum concurrent active trade workflows. This is not an open-position limit.
+          Maximum active trade workflows. Not an open-position limit.
         </span>
       </label>
       <button className="button primary" type="submit">

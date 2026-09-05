@@ -1,1 +1,33 @@
-:root { --ink: #f5f7f1; --muted: #9da79f; --bg: #111512; --panel: #18201a; --panel-2: #202a21; --line: #303c32; --acid: #c7f36b; --cyan: #6be3d4; --orange: #ffb464; --red: #ff817b; --serif: Georgia, "Times New Roman", serif; --sans: Arial, Helvetica, sans-serif; }
+:root {
+  --surface-base: #faf9f6;
+  --surface-raised: #fffdf9;
+  --surface-subtle: #f2efe9;
+  --ink: #111111;
+  --muted: #59616c;
+  --line: #dedbd4;
+  --signal: #ff4400;
+  --signal-soft: #fff0e9;
+  --focus: #0000ee;
+  --good: #0f766e;
+  --warn: #9a6700;
+  --danger: #b42318;
+  --sans: "Inter Display", Inter, "Inter Display Placeholder", Arial, sans-serif;
+  --serif: "Inter Display", Inter, "Inter Display Placeholder", Arial, sans-serif;
+  --radius-xs: 8px;
+  --radius-sm: 16px;
+  --radius-md: 24px;
+  --radius-lg: 30px;
+  --space-1: 8px;
+  --space-2: 12px;
+  --space-3: 20px;
+  --space-4: 28px;
+  --space-5: 40px;
+  --space-6: 60px;
+  --bg: var(--surface-base);
+  --panel: var(--surface-raised);
+  --panel-2: var(--surface-subtle);
+  --acid: var(--signal);
+  --cyan: var(--good);
+  --orange: var(--signal);
+  --red: var(--danger);
+}

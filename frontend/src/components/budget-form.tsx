@@ -33,7 +33,7 @@ export function BudgetForm({ onSaved }: { onSaved?: () => void }) {
           required
         />
         <span className="muted">
-          Maximum rolling BUY capital DARWIN may deploy over any 24-hour period.
+          Maximum rolling BUY capital DARWIN may deploy in 24 hours.
         </span>
       </label>
       <button className="button primary" type="submit">
