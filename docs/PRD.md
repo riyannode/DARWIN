@@ -71,15 +71,27 @@ Both modes use the same policy, account-scoped execution lock, idempotency, exte
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for implementation detail and [RUNBOOK.md](RUNBOOK.md) for operator procedures.
 
-## Post-judging MCP product obligations [PLANNED / POST-JUDGING]
+## Post-judging architecture and product obligations [PLANNED / POST-JUDGING]
 
-The canonical roadmap is in [ARCHITECTURE.md](ARCHITECTURE.md#post-judging-mcp-native-maintenance-roadmap-planned--post-judging). This PRD records only the product-level obligations; it does not duplicate the roadmap or alter the current status claims.
+The canonical roadmap is in [ARCHITECTURE.md](ARCHITECTURE.md#post-judging-architecture-roadmap-planned--post-judging). This PRD records only the product-level obligations; it does not duplicate the roadmap or alter the current status claims.
 
-- **Inbound MCP:** Claude, Codex, ChatGPT, and other compatible MCP hosts will connect to a future DARWIN MCP Server that reuses the same backend/domain services and durable state machines as the REST API and web UI. MCP handlers must not contain duplicate policy or execution logic.
-- **Outbound MCP:** `HUMAN_APPROVAL` will use the official MCP Python SDK directly to connect DARWIN to Binance Agent OS MCP. The current Codex App Server bridge is removable only after direct OAuth, tool discovery, tool calling, elicitation/confirmation, submission-uncertainty, and reconciliation parity is verified.
-- **AUTO_BOUNDED:** remains unchanged: deterministic backend authorization, fresh revalidation, direct Binance Spot API, then Binance. It does not become MCP-mediated.
-- **Operator interfaces:** Claude, Codex, ChatGPT, and other hosts are interfaces only; `AgentRuntime` remains DARWIN's trading decision runtime and the deterministic backend remains the authorization authority. A host disconnect must not stop an already-running `AUTO_BOUNDED` agent.
-- **Tool contract:** the planned grouped surface covers read/observability, agent control, human approval, owner configuration, emergency stop, and maintenance; the complete names and authorization contract live only in `ARCHITECTURE.md`.
-- Authorization — read-only tools use authenticated operator access; controls, approvals/rejections, and configuration mutations require authenticated owner authorization; mandate, budget, mode, and universe changes require stronger mutation authorization and auditable before/after state.
-- **Safety:** `disable_guardrails` is maintenance-only, disabled by default, and requires explicit owner authentication, recent reauthentication, confirmation, and full audit. It can never disable immutable Spot-only, no-transfer/withdrawal, auth/authz, financial-write-gate, durable intent/idempotency, submission-uncertainty/reconciliation, or emergency-stop invariants.
+### Core principle [PLANNED / POST-JUDGING]
+
+**AI proposes. DARWIN authorizes. Binance executes.** No model, host agent, or external interface is financial execution authority. The deterministic backend remains the sole authorization layer for every financial write.
+
+### Two operating modes [PLANNED / POST-JUDGING]
+
+- **`MCP_NATIVE`:** Host agent (Codex, Claude Code, Cursor, ChatGPT, or another MCP-compatible host) is the reasoning engine. DARWIN does NOT require its own LLM API key in this mode. DARWIN is the deterministic authorization/policy layer. Persistent autonomy after host closes: no.
+- **`AUTONOMOUS`:** DARWIN `AgentRuntime` is the reasoning engine. LLM provider configured in DARWIN: required. Persistent autonomy after host closes: yes.
+
+### Product obligations [PLANNED / POST-JUDGING]
+
+- **Inbound MCP:** Claude, Codex, ChatGPT, and other compatible MCP hosts will connect to a future DARWIN MCP Server that reuses the same backend/domain services and durable state machines as the REST API and web UI. MCP handlers must not contain duplicate policy or execution logic. Host-supplied pair, amount, price, confidence, or rationale are proposals/input only and must be independently validated server-side.
+- **Outbound MCP:** `HUMAN_APPROVAL` will use the official MCP Python SDK directly to connect DARWIN to Binance Agent OS MCP. The current Codex App Server bridge is removable only after direct OAuth, tool discovery, tool calling, elicitation/confirmation, submission-uncertainty, and reconciliation parity is verified. Do not incorrectly claim Binance Agent OS MCP currently provides unattended autonomous financial writes if confirmation is required by its provider contract.
+- **AUTO_BOUNDED:** remains unchanged: deterministic backend authorization, fresh revalidation, direct Binance Spot API, then Binance. It does not become MCP-mediated. Existing AUTO_BOUNDED direct Binance Spot API architecture may remain as the autonomous execution path.
+- **Operator interfaces:** In MCP_NATIVE mode, Claude, Codex, ChatGPT, and other hosts are the reasoning engine; DARWIN is the deterministic authorization/policy layer. A host disconnect must not stop an already-running AUTONOMOUS agent. The web UI may remain optional, legacy, or operator-facing; MCP_NATIVE may become the primary control surface post-judging.
+- **Tool contract:** the planned grouped surface covers read/observability, proposal validation/policy evaluation, agent control, human approval, owner configuration, emergency stop, and safety/guardrails (backend-enforced, not exposed as mutable MCP tools). The complete names and authorization contract live only in ARCHITECTURE.md. Do NOT expose a raw unrestricted place_order, buy, or sell tool that bypasses DARWIN policy.
+- **Authorization:** read-only tools use authenticated operator access; proposal validation uses authenticated operator access; controls, approvals/rejections, and configuration mutations require authenticated owner authorization; mandate, budget, mode, and universe changes require stronger mutation authorization and auditable before/after state.
+- **Safety:** Guardrails and immutable execution-safety invariants remain backend-enforced. They are not exposed as mutable MCP tools. No MCP tool may weaken, disable, or bypass the safety architecture. It can never disable immutable Spot-only, no-transfer/withdrawal, auth/authz, financial-write-gate, durable intent/idempotency, submission-uncertainty/reconciliation, or emergency-stop invariants.
+- **Known cleanup item (later implementation):** Current worker configuration validation should eventually become mode-aware so Codex/App Server dependencies are not required for modes that do not use them. Do not change code now.
 - **Status discipline:** all items above are **PLANNED / POST-JUDGING**. Existing implementation and verification tables remain authoritative until fresh evidence is collected.
