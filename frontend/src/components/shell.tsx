@@ -32,8 +32,8 @@ export function Shell({ children }: { children: ReactNode }) {
       setAuthStatus(error instanceof Error ? error.message : "Sign-in failed");
     }
   }
-  return <div className="app-shell">
-    <aside className="sidebar">
+  return <div className={isShowcase ? "app-shell showcase-shell" : "app-shell"}>
+    <aside className={isShowcase ? "sidebar showcase-public-nav" : "sidebar"}>
       <Link href="/" className="wordmark"><span className="wordmark-mark">D</span><span>DarwinSpot</span></Link>
       <p className="eyebrow">AUTONOMOUS SPOT OPERATOR</p>
       <nav aria-label="Primary navigation">{nav.map(([href, label]) => <Link key={href} href={href} className={pathname === href ? "nav-link active" : "nav-link"}>{label}</Link>)}</nav>
