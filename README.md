@@ -124,7 +124,7 @@ Both paths use the same policy, account-scoped execution lock, idempotency key, 
 | Docker JUDGE DEMO, all three demo scenarios, and zero durable `agent_runs`/`trade_intents` rows | **VERIFIED** in a fresh non-financial Compose run |
 | Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
 | Unauthenticated Chromium shell routes `/`, `/agent`, `/budget`, `/activity`, and `/settings` | **VERIFIED**; protected APIs correctly returned `401` and no mutation was attempted |
-| Public-enabled `/showcase` Chromium rendering | ** VERIFIED** in |
+| Public-enabled `/showcase` Chromium rendering | **VERIFIED** |
 | Custom AgentRuntime, typed validation, dual transports, policy, persistence, reconciliation, and public projection | **IMPLEMENTED** |
 | Funded `AUTO_BOUNDED` live order | **NOT VERIFIED** |
 | Authenticated `HUMAN_APPROVAL` Codex/Binance Agent OS acceptance | **PENDING / NOT VERIFIED** |
