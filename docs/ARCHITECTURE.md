@@ -204,6 +204,13 @@ policy.
 Closing the MCP host ends the interactive reasoning session. No DARWIN-side
 LLM API key should be required for this mode after future implementation.
 
+**Current implementation vs post-judging target:** The current implementation
+still uses DARWIN `AgentRuntime` for trade reasoning before human approval.
+The post-judging architecture changes `HUMAN_APPROVAL` so the external MCP
+host becomes the reasoning engine. This is a future reasoning-ownership
+change only. DARWIN's deterministic authorization, durable approval state,
+idempotency, reconciliation, and safety authority remain backend-owned.
+
 Binance Agent OS MCP is the intended outbound execution integration where
 applicable. Do not claim unattended autonomous writes through Binance Agent
 OS MCP if provider confirmation is required by its provider contract.
@@ -240,6 +247,15 @@ The existing `AUTO_BOUNDED` implementation is the current internal name for
 the `AUTONOMOUS` execution path. `AUTO_BOUNDED` terminology may appear in
 code, logs, and implementation documentation where necessary for accuracy, but
 the user-facing product mode is `AUTONOMOUS`.
+
+For post-judging MCP and product surfaces, `AUTONOMOUS` is the user-facing
+mode name and maps to the current internal `AUTO_BOUNDED` execution-mode
+value until the internal enum is deliberately migrated. Users should
+see and select `AUTONOMOUS`; existing code, logs, and storage may still
+use `AUTO_BOUNDED`. A future `darwin.change_mode("AUTONOMOUS")` must map
+server-side to the current internal `AUTO_BOUNDED` value until a real
+enum migration is implemented. The current runtime does not yet accept
+`AUTONOMOUS` directly as a mode value.
 
 Host disconnect must not stop an already-running autonomous worker. The
 execution transport remains separate from decision authority.
@@ -369,7 +385,7 @@ They do not need to share the same reasoning engine.
 | deterministic policy, mandate, budget, universe, account/market validation | Host proposal enters through MCP application-service seam; DARWIN validates independently | `AgentRuntime` / `DecisionCycle` propose; DARWIN validates the same way |
 | `Repository` and versioned mandate/budget state | Read current durable state and persist mutations through the same transaction rules | Same |
 | `ExecutionGateway` and execution checks | Reuse symbol, notional, budget, balance, filter, freshness, open-order, and emergency-stop checks | Same |
-| `TradeIntentApprovalService` | Own approve/reject/expiry/claim/consume transitions for HUMAN_APPROVAL approval channel | Same approval service for any approval-required path |
+| `TradeIntentApprovalService` | Own approve/reject/expiry/claim/consume transitions for HUMAN_APPROVAL approval channel | Not used by the default AUTONOMOUS execution path; AUTONOMOUS has no per-order human approval after deterministic authorization. Only relevant if a future explicitly approval-required workflow is introduced for AUTONOMOUS. |
 | `ApprovedExecution` and reconciliation | Own revalidation, write-boundary markers, confirmation uncertainty, external submission, and recovery | Same |
 | emergency-stop branch and audit event path | Keep emergency stop authoritative, deduplicated, and reconciliation-safe | Same |
 
@@ -484,6 +500,12 @@ universe validation paths as REST/web. They must preserve immutable mandate
 history, live Spot/USDT symbol validation, bounded values, and current mode
 preconditions. Each mutation must record auditable before/after state without
 recording secrets.
+
+For `darwin.change_mode`, the post-judging user-facing value `AUTONOMOUS`
+must map server-side to the current internal `AUTO_BOUNDED` execution-mode
+value until the internal enum is deliberately migrated. The current runtime
+does not yet accept `AUTONOMOUS` directly; the mapping is a future
+implementation detail.
 
 #### Emergency stop [PLANNED / POST-JUDGING]
 
