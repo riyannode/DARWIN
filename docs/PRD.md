@@ -70,3 +70,16 @@ Both modes use the same policy, account-scoped execution lock, idempotency, exte
 | Funded live execution | **NOT VERIFIED** |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for implementation detail and [RUNBOOK.md](RUNBOOK.md) for operator procedures.
+
+## Post-judging MCP product obligations [PLANNED / POST-JUDGING]
+
+The canonical roadmap is in [ARCHITECTURE.md](ARCHITECTURE.md#post-judging-mcp-native-maintenance-roadmap-planned--post-judging). This PRD records only the product-level obligations; it does not duplicate the roadmap or alter the current status claims.
+
+- **Inbound MCP:** Claude, Codex, ChatGPT, and other compatible MCP hosts will connect to a future DARWIN MCP Server that reuses the same backend/domain services and durable state machines as the REST API and web UI. MCP handlers must not contain duplicate policy or execution logic.
+- **Outbound MCP:** `HUMAN_APPROVAL` will use the official MCP Python SDK directly to connect DARWIN to Binance Agent OS MCP. The current Codex App Server bridge is removable only after direct OAuth, tool discovery, tool calling, elicitation/confirmation, submission-uncertainty, and reconciliation parity is verified.
+- **AUTO_BOUNDED:** remains unchanged: deterministic backend authorization, fresh revalidation, direct Binance Spot API, then Binance. It does not become MCP-mediated.
+- **Operator interfaces:** Claude, Codex, ChatGPT, and other hosts are interfaces only; `AgentRuntime` remains DARWIN's trading decision runtime and the deterministic backend remains the authorization authority. A host disconnect must not stop an already-running `AUTO_BOUNDED` agent.
+- **Tool contract:** the planned grouped surface covers read/observability, agent control, human approval, owner configuration, emergency stop, and maintenance; the complete names and authorization contract live only in `ARCHITECTURE.md`.
+- Authorization — read-only tools use authenticated operator access; controls, approvals/rejections, and configuration mutations require authenticated owner authorization; mandate, budget, mode, and universe changes require stronger mutation authorization and auditable before/after state.
+- **Safety:** `disable_guardrails` is maintenance-only, disabled by default, and requires explicit owner authentication, recent reauthentication, confirmation, and full audit. It can never disable immutable Spot-only, no-transfer/withdrawal, auth/authz, financial-write-gate, durable intent/idempotency, submission-uncertainty/reconciliation, or emergency-stop invariants.
+- **Status discipline:** all items above are **PLANNED / POST-JUDGING**. Existing implementation and verification tables remain authoritative until fresh evidence is collected.
