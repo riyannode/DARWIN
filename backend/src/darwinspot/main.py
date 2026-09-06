@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from darwinspot.api import activity, agent, auth, demo, portfolio, showcase
 from darwinspot.config import get_settings
+from darwinspot.execution.modes import ExecutionMode
 from darwinspot.mcp.server import build_mcp_app
 from darwinspot.storage.database import SessionLocal
 from darwinspot.storage.repository import Repository
@@ -53,13 +54,16 @@ def ready() -> dict[str, str]:
     settings = get_settings()
     with SessionLocal() as db:
         mode = Repository(db).get_or_create_agent().mode
-        missing_human_auth = mode == "HUMAN_APPROVAL" and not settings.token_encryption_key
-        missing_auto_credentials = mode == "AUTO_BOUNDED" and (
+        missing_human_auth = mode == ExecutionMode.HUMAN_APPROVAL and (
+            not settings.token_encryption_key or not settings.darwin_mcp_bearer_token
+        )
+        missing_auto_llm = mode == ExecutionMode.AUTO_BOUNDED and not settings.openai_api_key
+        missing_auto_credentials = mode == ExecutionMode.AUTO_BOUNDED and (
             not settings.binance_api_key or not settings.binance_api_secret
         )
         if not settings.demo_mode and (
             not settings.owner_password_hash
-            or not settings.openai_api_key
+            or missing_auto_llm
             or missing_human_auth
             or missing_auto_credentials
         ):

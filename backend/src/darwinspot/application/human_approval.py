@@ -174,6 +174,7 @@ class HumanApprovalApplication:
     async def submit_proposal(
         self, proposal: ProposalInput, idempotency_key: str
     ) -> DurableProposalResult:
+        self._require_human_approval_mode()
         existing = self.repo.find_intent_by_idempotency_key(idempotency_key)
         if existing is not None:
             approval = self._approval_for_intent(existing.id)
@@ -282,6 +283,8 @@ class HumanApprovalApplication:
 
     async def _evaluate(self, proposal: ProposalInput) -> NormalizedProposal:
         config = self.repo.get_or_create_agent()
+        if config.mode != ExecutionMode.HUMAN_APPROVAL:
+            raise ValueError("DARWIN is not in HUMAN_APPROVAL mode")
         policy = self.repo.current_policy()
         budget = self.repo.budget_snapshot()
         if policy is None or budget is None:
@@ -444,6 +447,10 @@ class HumanApprovalApplication:
             evaluation,
             policy_evidence,
         )
+
+    def _require_human_approval_mode(self) -> None:
+        if self.repo.get_or_create_agent().mode != ExecutionMode.HUMAN_APPROVAL:
+            raise ValueError("DARWIN is not in HUMAN_APPROVAL mode")
 
     def _evaluation_result(self, normalized: NormalizedProposal) -> ProposalEvaluation:
         reasons = tuple(reason for reason in (normalized.policy.reason,) if reason is not None)
