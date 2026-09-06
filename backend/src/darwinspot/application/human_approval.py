@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -24,6 +25,7 @@ from darwinspot.binance.mapper import (
     map_symbol_filters,
 )
 from darwinspot.config import Settings, get_settings
+from darwinspot.execution.approved import account_execution_lock
 from darwinspot.execution.demo_guard import FinancialWriteBlocked, ensure_financial_write_allowed
 from darwinspot.execution.modes import ExecutionMode
 from darwinspot.execution.policy import PolicyEvaluation, evaluate_execution_policy
@@ -189,6 +191,7 @@ class HumanApprovalApplication:
             )
 
         normalized = await self._evaluate(proposal)
+        normalized.policy_evidence["proposal_fingerprint"] = self._proposal_fingerprint(proposal)
         evaluation = self._evaluation_result(normalized)
         if not evaluation.allowed:
             return DurableProposalResult(False, False, None, None, None, None, evaluation)
@@ -200,18 +203,20 @@ class HumanApprovalApplication:
             {"source": "external_mcp_host", "policy": normalized.policy_evidence},
         )
         try:
-            intent, approval = self.repo.create_waiting_intent(
-                run_id=run.id,
-                decision=normalized.decision.model_dump(mode="json"),
-                evaluation=normalized.policy,
-                policy_evidence=normalized.policy_evidence,
-                operator_user_id="MCP_OWNER",
-                operator_chat_id="MCP_CONTROL_PANEL",
-                ttl_seconds=self.settings.approval_ttl_seconds,
-                idempotency_key=idempotency_key,
-            )
+            with account_execution_lock(self.db, self.settings.binance_account_lock_key):
+                intent, approval = self.repo.create_waiting_intent(
+                    run_id=run.id,
+                    decision=normalized.decision.model_dump(mode="json"),
+                    evaluation=normalized.policy,
+                    policy_evidence=normalized.policy_evidence,
+                    operator_user_id="MCP_OWNER",
+                    operator_chat_id="MCP_CONTROL_PANEL",
+                    ttl_seconds=self.settings.approval_ttl_seconds,
+                    idempotency_key=idempotency_key,
+                )
         except IntegrityError:
             self.db.rollback()
+            self.repo.complete_run(run.id, "DUPLICATE_PROPOSAL", None, "idempotency replay")
             existing = self.repo.find_intent_by_idempotency_key(idempotency_key)
             if existing is None or not self._matches_existing(existing, proposal):
                 raise ValueError("proposal idempotency conflict") from None
@@ -227,6 +232,10 @@ class HumanApprovalApplication:
                 approval.status,
                 self._evaluation_from_intent(existing),
             )
+        except Exception as exc:
+            self.db.rollback()
+            self.repo.complete_run(run.id, "REJECTED", None, str(exc))
+            raise
         self.repo.complete_run(
             run.id,
             "WAITING_FOR_APPROVAL",
@@ -407,6 +416,12 @@ class HumanApprovalApplication:
                 else None
             ),
             "mandate_version": mandate.id if mandate is not None else None,
+            "policy_snapshot": {
+                "allowed_symbols": sorted(policy.allowed_symbols),
+                "configured_symbols": sorted(policy.configured_symbols),
+                "max_order_notional": str(policy.max_order_notional),
+                "max_open_actionable_intents": policy.max_open_actionable_intents,
+            },
             "reference_price": str(reference_price),
             "observed_at": observed_at.isoformat(),
         }
@@ -475,12 +490,22 @@ class HumanApprovalApplication:
         )
 
     @staticmethod
+    def _proposal_fingerprint(proposal: ProposalInput) -> str:
+        canonical = json.dumps(
+            proposal.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
     def _matches_existing(intent: TradeIntent, proposal: ProposalInput) -> bool:
-        return (
-            intent.pair == proposal.symbol
-            and intent.side == proposal.side
-            and intent.order_type == proposal.order_type
-            and (proposal.rationale or "external MCP proposal") == intent.rationale
+        try:
+            stored = json.loads(intent.policy_evidence or "{}")
+        except json.JSONDecodeError:
+            return False
+        return stored.get("proposal_fingerprint") == HumanApprovalApplication._proposal_fingerprint(
+            proposal
         )
 
     @staticmethod

@@ -85,7 +85,11 @@ async def update_universe(
         if transport is not None:
             await transport.close()
     repo.record_audit_event(
-        trigger="MCP_SUPPORTED_SYMBOLS_CHANGED",
+        trigger=(
+            "MCP_SUPPORTED_SYMBOLS_CHANGED"
+            if actor == "MCP_OWNER"
+            else "SUPPORTED_SYMBOLS_CHANGED"
+        ),
         state="SUPPORTED_SYMBOLS_CHANGED",
         model=settings.openai_model,
         evidence={"actor": actor, "supportedSymbols": list(saved)},

@@ -146,7 +146,7 @@ class Repository:
         return self.db.scalar(
             select(AgentRun)
             .where(
-                AgentRun.trigger_type.in_(("SCHEDULED", "RUN_ONCE")),
+                AgentRun.trigger_type.in_(("SCHEDULED", "RUN_ONCE", "MCP_PROPOSAL")),
                 AgentRun.completed_at.is_not(None),
             )
             .order_by(AgentRun.started_at.desc())
@@ -703,6 +703,22 @@ class Repository:
         policy = self.current_policy()
         if config is None or policy is None:
             raise ValueError("agent policy is required before creating an intent")
+        if config.emergency_stop:
+            raise SubmissionBlocked("emergency stop is active")
+        mandate = self.current_mandate()
+        expected_mandate = policy_evidence.get("mandate_version")
+        if expected_mandate is not None and (mandate is None or mandate.id != expected_mandate):
+            raise BudgetExceeded("proposal authorization is stale")
+        snapshot = policy_evidence.get("policy_snapshot")
+        if isinstance(snapshot, dict):
+            current_snapshot = {
+                "allowed_symbols": sorted(policy.allowed_symbols),
+                "configured_symbols": sorted(policy.configured_symbols),
+                "max_order_notional": str(policy.max_order_notional),
+                "max_open_actionable_intents": policy.max_open_actionable_intents,
+            }
+            if snapshot != current_snapshot:
+                raise BudgetExceeded("proposal policy changed during admission")
         quantity = Decimal(str(decision["quantity"]))
         price = Decimal(str(decision["price"])) if decision.get("price") is not None else None
         side = str(decision.get("side") or decision["action"])

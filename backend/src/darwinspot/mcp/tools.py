@@ -6,7 +6,6 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Annotated, Any, Literal, cast
 
-from fastapi import HTTPException
 from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field
@@ -28,18 +27,27 @@ from darwinspot.application.projections import (
     activity_projection,
     budget_projection,
     latest_decision_projection,
+    live_universe_projection,
     mandate_projection,
     pending_trades_projection,
+    portfolio_projection,
     status_projection,
-    universe_projection,
 )
-from darwinspot.binance.client import AgentOSUnavailable, ToolCatalog
-from darwinspot.binance.factory import build_binance_client
-from darwinspot.binance.mapper import map_spot_market_universe
 from darwinspot.config import get_settings
-from darwinspot.execution.modes import ExecutionMode
 from darwinspot.storage.database import SessionLocal
 from darwinspot.storage.repository import Repository
+
+ProposalDecimal = Annotated[
+    Decimal | None,
+    Field(default=None, gt=Decimal("0"), max_digits=30, decimal_places=12),
+]
+OptionalFactors = Annotated[
+    list[Annotated[str, Field(max_length=256)]] | None,
+    Field(default=None, max_length=6),
+]
+Rationale = Annotated[str, Field(default="", max_length=2000)]
+IntentId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[0-9a-fA-F-]{36}$")]
+BoundedLimit = Annotated[int, Field(ge=1, le=50)]
 
 
 def _result(value: Any) -> dict[str, Any]:
@@ -97,41 +105,6 @@ def _proposal(
         supporting_factors=supporting_factors or [],
         risk_factors=risk_factors or [],
     )
-
-
-async def _get_universe() -> dict[str, Any]:
-    with _with_db() as db:
-        base = universe_projection(db)
-        repo = Repository(db)
-        client: Any = None
-        try:
-            client = build_binance_client(
-                get_settings(), repo.current_connection(), mode=ExecutionMode.HUMAN_APPROVAL
-            )
-            catalog = ToolCatalog(await client.discover_tools())
-            live = map_spot_market_universe(
-                await client.call_tool(catalog.arguments("market_universe", {}))
-            )
-            allowed = set(base["allowedSymbols"])
-            configured = set(base["configuredSymbols"])
-            effective = sorted(
-                str(item["symbol"])
-                for item in live
-                if str(item.get("symbol")) in configured
-                and str(item.get("symbol")) in allowed
-                and item.get("quote_asset", item.get("quoteAsset")) == "USDT"
-                and item.get("status") == "TRADING"
-            )
-            base["effectiveSymbols"] = effective
-            base["liveState"] = "FRESH"
-            return base
-        except (AgentOSUnavailable, ValueError, RuntimeError):
-            base["liveState"] = "UNAVAILABLE"
-            return base
-        finally:
-            transport = getattr(client, "transport", None)
-            if transport is not None:
-                await transport.close()
 
 
 def register_tools(server: MCPServer[Any]) -> None:
@@ -196,7 +169,8 @@ def register_tools(server: MCPServer[Any]) -> None:
         structured_output=True,
     )
     async def get_universe() -> dict[str, Any]:
-        return _result(await _get_universe())
+        with _with_db() as db:
+            return _result(await live_universe_projection(db))
 
     @server.tool(
         name="darwin.get_portfolio",
@@ -206,13 +180,8 @@ def register_tools(server: MCPServer[Any]) -> None:
         structured_output=True,
     )
     async def get_portfolio() -> dict[str, Any]:
-        from darwinspot.api.portfolio import get_portfolio as route_get_portfolio
-
         with _with_db() as db:
-            try:
-                return _result(await route_get_portfolio(None, db))
-            except (HTTPException, AgentOSUnavailable, ValueError, RuntimeError):
-                return _error("portfolio is currently unavailable")
+            return _result(await portfolio_projection(db))
 
     @server.tool(
         name="darwin.get_latest_decision",
@@ -232,7 +201,7 @@ def register_tools(server: MCPServer[Any]) -> None:
         annotations=readonly("DARWIN activity"),
         structured_output=True,
     )
-    def get_activity(limit: int = 25) -> dict[str, Any]:
+    def get_activity(limit: BoundedLimit = 25) -> dict[str, Any]:
         with _with_db() as db:
             bounded_limit = max(1, min(limit, 50))
             return _result(
@@ -249,7 +218,7 @@ def register_tools(server: MCPServer[Any]) -> None:
         annotations=readonly("DARWIN pending trades"),
         structured_output=True,
     )
-    def list_pending_trades(limit: int = 25) -> dict[str, Any]:
+    def list_pending_trades(limit: BoundedLimit = 25) -> dict[str, Any]:
         with _with_db() as db:
             bounded_limit = max(1, min(limit, 50))
             return _result(
@@ -270,13 +239,13 @@ def register_tools(server: MCPServer[Any]) -> None:
         symbol: Annotated[str, Field(pattern=r"^[A-Z0-9]{5,20}$")],
         side: Literal["BUY", "SELL"],
         order_type: Literal["MARKET", "LIMIT"] = "MARKET",
-        quantity: Decimal | None = None,
-        intended_notional: Decimal | None = None,
-        price: Decimal | None = None,
-        confidence: Decimal | None = None,
-        rationale: str = "",
-        supporting_factors: list[str] | None = None,
-        risk_factors: list[str] | None = None,
+        quantity: ProposalDecimal = None,
+        intended_notional: ProposalDecimal = None,
+        price: ProposalDecimal = None,
+        confidence: Annotated[Decimal | None, Field(default=None, ge=Decimal("0"), le=Decimal("1"))] = None,
+        rationale: Rationale = "",
+        supporting_factors: OptionalFactors = None,
+        risk_factors: OptionalFactors = None,
     ) -> dict[str, Any]:
         proposal = _proposal(
             symbol=symbol,
@@ -309,13 +278,13 @@ def register_tools(server: MCPServer[Any]) -> None:
             Field(min_length=36, max_length=36, pattern=r"^[0-9a-fA-F-]{36}$"),
         ],
         order_type: Literal["MARKET", "LIMIT"] = "MARKET",
-        quantity: Decimal | None = None,
-        intended_notional: Decimal | None = None,
-        price: Decimal | None = None,
-        confidence: Decimal | None = None,
-        rationale: str = "",
-        supporting_factors: list[str] | None = None,
-        risk_factors: list[str] | None = None,
+        quantity: ProposalDecimal = None,
+        intended_notional: ProposalDecimal = None,
+        price: ProposalDecimal = None,
+        confidence: Annotated[Decimal | None, Field(default=None, ge=Decimal("0"), le=Decimal("1"))] = None,
+        rationale: Rationale = "",
+        supporting_factors: OptionalFactors = None,
+        risk_factors: OptionalFactors = None,
     ) -> dict[str, Any]:
         proposal = SubmitProposalInput(
             **_proposal(
@@ -349,7 +318,7 @@ def register_tools(server: MCPServer[Any]) -> None:
         annotations=mutation("Approve DARWIN trade", destructive=True, idempotent=True),
         structured_output=True,
     )
-    def approve_trade(intent_id: str) -> dict[str, Any]:
+    def approve_trade(intent_id: IntentId) -> dict[str, Any]:
         with _with_db() as db:
             try:
                 return _approval_result(HumanApprovalApplication(db).approve_trade(intent_id))
@@ -363,7 +332,7 @@ def register_tools(server: MCPServer[Any]) -> None:
         annotations=mutation("Reject DARWIN trade", destructive=False, idempotent=True),
         structured_output=True,
     )
-    def reject_trade(intent_id: str) -> dict[str, Any]:
+    def reject_trade(intent_id: IntentId) -> dict[str, Any]:
         with _with_db() as db:
             try:
                 return _approval_result(HumanApprovalApplication(db).reject_trade(intent_id))
@@ -378,7 +347,7 @@ def register_tools(server: MCPServer[Any]) -> None:
         structured_output=True,
     )
     def resolve_execution_confirmation(
-        intent_id: str, action: Literal["ACCEPT", "DECLINE", "CANCEL"]
+        intent_id: IntentId, action: Literal["ACCEPT", "DECLINE", "CANCEL"]
     ) -> dict[str, Any]:
         with _with_db() as db:
             try:
@@ -396,10 +365,12 @@ def register_tools(server: MCPServer[Any]) -> None:
         structured_output=True,
     )
     def update_mandate_tool(
-        trading_mandate: str,
-        allowed_symbols: list[str],
-        max_order_notional: Decimal,
-        max_open_actionable_intents: int,
+        trading_mandate: Annotated[str, Field(min_length=1, max_length=4000)],
+        allowed_symbols: Annotated[list[Annotated[str, Field(max_length=20)]], Field(min_length=1, max_length=100)],
+        max_order_notional: Annotated[
+            Decimal, Field(gt=Decimal("0"), max_digits=30, decimal_places=12)
+        ],
+        max_open_actionable_intents: Annotated[int, Field(gt=0, le=100)],
     ) -> dict[str, Any]:
         request = MandateInput(
             trading_mandate=trading_mandate,
@@ -427,7 +398,9 @@ def register_tools(server: MCPServer[Any]) -> None:
         annotations=mutation("Update DARWIN budget", destructive=True, idempotent=False),
         structured_output=True,
     )
-    def update_budget_tool(daily_budget: Decimal) -> dict[str, Any]:
+    def update_budget_tool(
+        daily_budget: Annotated[Decimal, Field(gt=Decimal("0"), max_digits=30, decimal_places=12)]
+    ) -> dict[str, Any]:
         with _with_db() as db:
             try:
                 return _result(
@@ -448,7 +421,9 @@ def register_tools(server: MCPServer[Any]) -> None:
         annotations=mutation("Update DARWIN universe", destructive=True, idempotent=False),
         structured_output=True,
     )
-    async def update_universe_tool(supported_symbols: list[str]) -> dict[str, Any]:
+    async def update_universe_tool(
+        supported_symbols: Annotated[list[Annotated[str, Field(max_length=20)]], Field(min_length=1, max_length=100)]
+    ) -> dict[str, Any]:
         with _with_db() as db:
             try:
                 return _result(
