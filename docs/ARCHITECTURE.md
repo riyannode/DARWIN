@@ -27,7 +27,7 @@ flowchart TD
     W -->|No| N[FINANCIAL_WRITES_DISABLED]
     W -->|Yes| X{Mode-specific authorization claim}
     X -->|AUTO_BOUNDED| AA[AUTO_POLICY]
-    X -->|HUMAN_APPROVAL| HA[Telegram or web approval]
+    X -->|HUMAN_APPROVAL| HA[External MCP proposal + owner approval]
     AA --> Q[Account lock + fresh evidence + current policy/budget revalidation]
     HA --> Q
     Q --> F{Final financial-write and applicable confirmation gates}
@@ -73,9 +73,28 @@ A `HOLD` is a model decision. `SKIPPED` is a system outcome. Policy rejection, s
 | Mode | Authorization | Evidence and transport | Approval semantics |
 | --- | --- | --- | --- |
 | `AUTO_BOUNDED` | `AUTO_POLICY` after policy admission | The direct backend-only **Binance Spot API** supplies exchange metadata, ticker, account, open orders, recent trades, filters, order submit/query, and emergency cancel. | No per-order human approval, Codex OAuth, or Telegram approval. |
-| `HUMAN_APPROVAL` | durable approved `TradeIntentApproval` | **Binance Agent OS** is reached through Codex App Server + MCP. Codex is a transport/authentication adapter, not a decision authority. | Telegram callbacks and owner web approval call the same durable state machine. Telegram notification is not an `AUTO_BOUNDED` authorization mechanism. |
+| `HUMAN_APPROVAL` | external MCP proposal plus explicit owner approval through DARWIN MCP | The inbound DARWIN MCP control plane admits a durable approval intent; approved execution uses Codex App Server + **Binance Agent OS** MCP. | Proposal and owner approval are separate events. The external host cannot self-approve. |
 
 Both modes use a fresh revalidation, account-scoped lock, current policy/budget, idempotency key, write request hash, external-call marker, durable outbox, and reconciliation. `HUMAN_APPROVAL` can stop at a further observed Codex/Binance confirmation; DARWIN never auto-answers it. `CODEX_WRITE_CONFIRMATION_VERIFIED=false` blocks HUMAN_APPROVAL financial submission pending manual provider-contract verification.
+
+### MCP-native HUMAN_APPROVAL flow
+
+**AI proposes. DARWIN authorizes. Binance executes.** A compatible external MCP host—such as Codex, Claude Code, Cursor, or ChatGPT—owns reasoning and proposal generation. DARWIN owns the Trading Mandate, budget, universe, deterministic policy, durable state, financial-write gate, safety, and reconciliation.
+
+```text
+External host reasoning
+  -> DARWIN MCP read projections
+  -> darwin.validate_proposal (dry-run; no durable work)
+  -> darwin.submit_proposal (fresh server-side validation)
+  -> WAITING_FOR_APPROVAL TradeIntent + explicit approval record
+  -> darwin.approve_trade or darwin.reject_trade
+  -> existing TradeIntentApprovalService
+  -> durable execution outbox / ApprovedExecution
+  -> Codex App Server -> Binance Agent OS MCP
+  -> provider confirmation where applicable -> Binance
+```
+
+The MCP host may inspect authorized state, reason, propose, and present controls to the owner. It must not supply trusted balances, Binance filters, policy results, final Binance arguments, or unrestricted raw order tools. Proposal confidence and policy `PASS` are never authorization. The private `/mcp` endpoint is bearer-protected by `DARWIN_MCP_BEARER_TOKEN`; HUMAN_APPROVAL readiness does not require DARWIN `OPENAI_API_KEY`.
 
 ## Financial-write safety
 
@@ -125,6 +144,7 @@ The route reads persisted completed `SCHEDULED`/`RUN_ONCE` evidence. It neither 
 | Claim | Status |
 | --- | --- |
 | Runtime architecture, AgentRuntime, Pydantic validation, policy, transports, state machine, and public projection | **IMPLEMENTED** |
+| MCP-native HUMAN_APPROVAL control plane, bearer denial, tools/list, mode-aware readiness, and proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
 | Fresh non-financial Docker JUDGE DEMO: all three demo APIs and zero `agent_runs`/`trade_intents` rows | **VERIFIED** |
 | Fresh Chromium `/demo` rendering and scenario selection | **VERIFIED** |
 | Fresh unauthenticated Chromium shells for `/`, `/agent`, `/budget`, `/activity`, and `/settings` | **VERIFIED**; protected APIs returned expected `401` responses and no mutation was attempted |

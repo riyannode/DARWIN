@@ -67,26 +67,19 @@ DEMO_MODE=false
 FINANCIAL_WRITES_ENABLED=false
 PUBLIC_SHOWCASE_ENABLED=false
 DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DATABASE
-OPENAI_API_KEY=<backend-only provider key>
-OPENAI_MODEL=gpt-5.4-mini
 OWNER_PASSWORD_HASH=<Argon2id hash>
 FRONTEND_ORIGIN=https://your-real-frontend.example
 ```
 
-`OPENAI_BASE_URL` is optional. Omit it for direct OpenAI, or set an absolute HTTP(S) OpenAI-compatible endpoint without embedded credentials, query, or fragment.
-
-The worker also requires a nonempty `CODEX_APP_SERVER_COMMAND`; the repository default is:
-
-```dotenv
-CODEX_APP_SERVER_COMMAND="codex app-server --stdio"
-CODEX_APP_SERVER_VERSION=0.153.0
-```
-
-The command is only used as a transport process by HUMAN_APPROVAL. `AGENT_CYCLE_SECONDS` defaults to `300`; `SIGNAL_COOLDOWN_SECONDS` defaults to `300`; `APPROVAL_TTL_SECONDS` defaults to `90` and is bounded to 30–180 seconds.
+`OPENAI_BASE_URL` is optional for `AUTO_BOUNDED`. Omit it for direct OpenAI, or set an absolute HTTP(S) OpenAI-compatible endpoint without embedded credentials, query, or fragment. The external MCP host supplies reasoning for the MCP-native `HUMAN_APPROVAL` path; DARWIN does not require `OPENAI_API_KEY` for that mode's readiness.
 
 ### AUTO_BOUNDED configuration
 
+`AUTO_BOUNDED` continues to use DARWIN's AgentRuntime and requires its LLM configuration plus direct Binance credentials:
+
 ```dotenv
+OPENAI_API_KEY=<backend-only provider key>
+OPENAI_MODEL=gpt-5.4-mini
 BINANCE_API_KEY=<dedicated backend-only Spot key>
 BINANCE_API_SECRET=<dedicated backend-only Spot secret>
 BINANCE_SPOT_API_BASE_URL=https://api.binance.com
@@ -98,6 +91,8 @@ The direct adapter accepts only approved Binance HTTPS API hosts. Use a dedicate
 
 ### HUMAN_APPROVAL configuration
 
+`HUMAN_APPROVAL` is MCP-native: an external MCP-compatible host reasons and proposes through DARWIN's private `/mcp` control plane. DARWIN validates the untrusted proposal, persists `WAITING_FOR_APPROVAL`, and keeps explicit owner approval separate from model reasoning.
+
 ```dotenv
 BINANCE_AGENT_OS_MCP_URL=https://agent.binance.com/mcp/agentic
 BINANCE_AGENT_OS_TRANSPORT=codex
@@ -105,9 +100,20 @@ CODEX_APP_SERVER_COMMAND="codex app-server --stdio"
 CODEX_APP_SERVER_VERSION=0.153.0
 CODEX_WRITE_CONFIRMATION_VERIFIED=false
 TOKEN_ENCRYPTION_KEY=<Fernet key for persisted Agent OS/OAuth material>
+DARWIN_MCP_BEARER_TOKEN=<private bearer token for the inbound /mcp control plane>
 ```
 
-Use the genuine Codex-managed Binance Agent OS authorization flow. Keep `CODEX_WRITE_CONFIRMATION_VERIFIED=false` until an operator has observed the real write confirmation contract. A successful setting does not prove the operator is authenticated.
+Use a compatible MCP host such as Codex, Claude Code, Cursor, or ChatGPT with the configured bearer token. The host may read authorized projections, reason, propose, and present controls; it cannot provide trusted balances, filters, policy results, final Binance arguments, or unrestricted raw order tools. `darwin.approve_trade` and `darwin.reject_trade` are explicit owner actions through the existing approval service. Keep `CODEX_WRITE_CONFIRMATION_VERIFIED=false` until an operator has observed the real write confirmation contract. A successful setting does not prove the operator is authenticated.
+
+Scheduling defaults:
+
+```dotenv
+AGENT_CYCLE_SECONDS=300
+SIGNAL_COOLDOWN_SECONDS=300
+APPROVAL_TTL_SECONDS=90
+```
+
+The Codex command above is used as a transport process after HUMAN_APPROVAL, not as the reasoning engine. `APPROVAL_TTL_SECONDS` is bounded to 30–180 seconds.
 
 ### Optional Telegram
 
@@ -163,7 +169,7 @@ curl -i http://127.0.0.1:8000/health/ready
 curl -i http://127.0.0.1:8000/docs
 ```
 
-`/health/ready` returns 503 in live mode until the owner hash, model key, and mode-dependent transport requirements are present. It is configuration readiness, not funded-order acceptance.
+`/health/ready` is mode-aware in live mode. It requires the owner hash in every non-demo profile. `AUTO_BOUNDED` additionally requires `OPENAI_API_KEY`, `OPENAI_MODEL`, and direct Binance Spot credentials. `HUMAN_APPROVAL` does not require DARWIN `OPENAI_API_KEY`, but it requires `TOKEN_ENCRYPTION_KEY` and `DARWIN_MCP_BEARER_TOKEN` for the MCP-native control plane and persisted provider authorization. Readiness is configuration readiness, not funded-order acceptance.
 
 ## Current evidence
 
@@ -172,8 +178,9 @@ curl -i http://127.0.0.1:8000/docs
 | Demo Docker runtime, all demo scenarios, and zero durable demo rows | **VERIFIED** in a fresh non-financial Compose run |
 | Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
 | Public-enabled `/showcase` Chromium rendering | **NOT VERIFIED** in this run |
+| MCP-native HUMAN_APPROVAL bearer/tools/list/readiness/proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
 | Live configuration, worker, mode transport, and safety implementation | **IMPLEMENTED** |
 | Funded AUTO_BOUNDED execution | **NOT VERIFIED** |
-| Authenticated HUMAN_APPROVAL Codex/Binance Agent OS acceptance | **PENDING / NOT VERIFIED** |
+| Authenticated external Binance Agent OS/Codex provider acceptance | **PENDING / NOT VERIFIED** |
 
 Do not use documentation verification as a reason to submit a funded order, withdrawal, transfer, or live transport confirmation.

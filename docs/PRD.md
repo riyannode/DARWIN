@@ -1,6 +1,6 @@
 # DARWIN product contract
 
-DARWIN is an autonomous Binance Spot decision and execution runtime. Give it a **Trading Mandate** and hard backend limits; it decides what, when, and how to trade only within those limits.
+DARWIN is an owner-operated Binance Spot decision and execution runtime with two execution paths. `AUTO_BOUNDED` uses DARWIN's AgentRuntime for proposal generation; MCP-native `HUMAN_APPROVAL` uses an external MCP-compatible host for reasoning and proposal generation. In both paths, DARWIN's backend owns authorization and safety.
 
 ## Authority model
 
@@ -46,10 +46,10 @@ Candidate evidence supports selection and is retained for audit. Only selected-p
 
 ## Modes
 
-- **AUTO_BOUNDED:** `AUTO_POLICY` authorizes a policy-passing intent. It uses the direct backend-only **Binance Spot API** after fresh revalidation and does not need per-order Telegram/web approval or Codex OAuth.
-- **HUMAN_APPROVAL:** a policy-passing intent waits for a durable Telegram or web approval. After fresh revalidation, it uses Codex App Server and **Binance Agent OS** MCP. Codex does not choose a trade or override policy.
+- **AUTO_BOUNDED:** DARWIN's `AgentRuntime` proposes a policy-passing intent; `AUTO_POLICY` authorizes it after fresh revalidation and the direct backend-only **Binance Spot API** executes it. It does not need per-order Telegram/web approval or Codex OAuth.
+- **HUMAN_APPROVAL:** an external MCP-compatible host is the reasoning engine and proposal generator. It reads authorized DARWIN state and submits an untrusted proposal through DARWIN's private MCP control plane. DARWIN independently evaluates mandate, universe, policy, budget, risk, freshness, and write-gate state; a passing proposal becomes durable `WAITING_FOR_APPROVAL` work only after server-side validation. An explicit owner `darwin.approve_trade` or `darwin.reject_trade` call then uses the existing approval service and outbox path before Codex App Server + **Binance Agent OS** MCP transport.
 
-Both modes use the same policy, account-scoped execution lock, idempotency, external-call marker, reconciliation, and audit trail.
+**AI proposes. DARWIN authorizes. Binance executes.** The external host may reason, inspect authorized state, propose, and present controls to the owner. It may not self-approve, supply trusted balances or filters, inject policy results, supply final Binance arguments, or access unrestricted raw order tools. Proposal confidence and policy `PASS` are not authorization. Both modes use the same policy, account-scoped execution lock, idempotency, external-call marker, reconciliation, and audit trail.
 
 ## Safety and failure contract
 

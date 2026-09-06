@@ -2,7 +2,7 @@
 
 ## Positioning
 
-DARWIN is an autonomous Binance Spot trading agent with a visible, deterministic authority boundary. An owner configures a high-level **Trading Mandate**, **Allowed Symbols**, **Max Per Trade**, **24h Trading Budget**, **Max Concurrent Trades**, a **Configured Universe**, and an execution mode. DARWIN decides what, when, and how to trade only within those backend-enforced limits.
+DARWIN is an owner-operated Binance Spot decision and execution runtime with two execution paths and a visible, deterministic authority boundary. `AUTO_BOUNDED` uses DARWIN's AgentRuntime for proposal generation; MCP-native `HUMAN_APPROVAL` uses an external MCP-compatible host for reasoning and proposal generation. The owner supplies a high-level **Trading Mandate**, deterministic limits, and an execution mode. DARWIN's backend authorizes every possible financial write.
 
 ## What is implemented
 
@@ -11,8 +11,8 @@ DARWIN is an autonomous Binance Spot trading agent with a visible, deterministic
 - A newly created Configured Universe bootstraps to `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`, and `XRPUSDT` and accepts up to 100 validated Spot/USDT symbols. A database upgraded from before `0004_dual_execution_and_universe` can retain the migration's four-symbol compatibility value (`BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`) until an owner updates it.
 - The Effective Universe is `Configured Universe ∩ Allowed Symbols ∩ live-valid Binance Spot/USDT symbols`.
 - The worker scans all effective candidates, selects one pair, records selected-pair evidence, and applies deterministic policy before any execution work.
-- `AUTO_BOUNDED` uses the direct, backend-only **Binance Spot API**. `HUMAN_APPROVAL` uses explicit Telegram or web approval and **Binance Agent OS** through Codex App Server + MCP.
-- The backend owns policy, budget, balances, filters, freshness, open-order conflict, emergency stop, idempotency, external-call uncertainty, reconciliation, and the financial-write gate. The model and Codex cannot override those controls.
+- `AUTO_BOUNDED` uses the direct, backend-only **Binance Spot API**. `HUMAN_APPROVAL` is MCP-native: an external MCP-compatible host reasons and proposes through DARWIN's private MCP control plane, while DARWIN validates, authorizes, and persists the durable approval state.
+- The backend owns policy, budget, balances, filters, freshness, open-order conflict, emergency stop, idempotency, external-call uncertainty, reconciliation, and the financial-write gate. The external host/model and Codex cannot override those controls.
 
 ## Safety boundary
 
@@ -20,8 +20,26 @@ DARWIN is Spot-only. It does not support futures, margin, leverage, options, tra
 
 A financial write requires the configured mode's authorization plus fresh revalidation. Durable intent state, an idempotency key, a pre-call marker, and reconciliation protect against duplicate or ambiguous submission. `SUBMISSION_UNKNOWN` is reconciled before retry. Emergency stop blocks ordinary new work and routes any necessary cancellation through durable reconciliation.
 
-## Judge material
+## MCP-native HUMAN_APPROVAL
 
+**AI proposes. DARWIN authorizes. Binance executes.** The external MCP host may read authorized DARWIN projections, reason, validate an untrusted proposal, submit it with an idempotency key, and present owner controls. The implemented control sequence is:
+
+```text
+DARWIN MCP read tools
+  -> darwin.validate_proposal (dry-run; no intent or approval)
+  -> darwin.submit_proposal
+  -> durable WAITING_FOR_APPROVAL
+  -> explicit owner darwin.approve_trade / darwin.reject_trade
+  -> TradeIntentApprovalService
+  -> durable execution outbox
+  -> ApprovedExecution
+  -> Codex App Server -> Binance Agent OS MCP
+  -> provider confirmation where applicable -> Binance
+```
+
+The external host/model cannot self-approve, provide trusted balances, filters, policy results, final Binance arguments, or unrestricted raw order tools. Proposal confidence and policy `PASS` remain separate from owner authorization. The private `/mcp` endpoint uses `DARWIN_MCP_BEARER_TOKEN`.
+
+## Judge material
 | Material | Location |
 | --- | --- |
 | Source | [github.com/riyannode/DARWIN](https://github.com/riyannode/DARWIN) |
@@ -42,8 +60,9 @@ The YouTube video is the stable demo reference. The Cloudflare Tunnel is a curre
 | Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
 | Public-enabled `/showcase` Chromium rendering | **NOT VERIFIED** in this run |
 | AgentRuntime, Pydantic validation, direct Spot adapter, Binance Agent OS/Codex transport, policy, durable state, and reconciliation | **IMPLEMENTED** |
+| MCP-native HUMAN_APPROVAL bearer/tools/list/readiness/proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
 | Funded `AUTO_BOUNDED` order | **NOT VERIFIED** |
-| Authenticated `HUMAN_APPROVAL` Binance Agent OS/Codex acceptance | **PENDING / NOT VERIFIED** |
+| Authenticated external Binance Agent OS/Codex provider acceptance | **PENDING / NOT VERIFIED** |
 | Full owner-control-panel browser acceptance | **NOT VERIFIED** |
 
 The judge demo is synthetic: it has no external LLM, Binance connection, or financial write. The PUBLIC LIVE SHOWCASE is real-model/real-market/read-only evidence; it is not a claim of funded live trading.

@@ -22,22 +22,28 @@ The financial-write setting is enforced at safe-live decision admission and agai
 
 | Mode | Required transport | Financial credentials | Human authorization |
 | --- | --- | --- | --- |
-| `AUTO_BOUNDED` | direct Binance Spot API | `BINANCE_API_KEY` + `BINANCE_API_SECRET` | none per order |
-| `HUMAN_APPROVAL` | Codex App Server + Binance Agent OS MCP | genuine Codex-managed Agent OS OAuth material, protected by `TOKEN_ENCRYPTION_KEY` | Telegram or web approval |
+| `AUTO_BOUNDED` | direct Binance Spot API | `OPENAI_API_KEY` + `BINANCE_API_KEY` + `BINANCE_API_SECRET` | none per order |
+| `HUMAN_APPROVAL` | inbound DARWIN MCP for proposal/control, then Codex App Server + Binance Agent OS MCP for approved execution | `DARWIN_MCP_BEARER_TOKEN` + `TOKEN_ENCRYPTION_KEY` and genuine provider authorization; no DARWIN `OPENAI_API_KEY` required for readiness | explicit owner `darwin.approve_trade` / `darwin.reject_trade` through MCP |
 
 `AUTO_BOUNDED` does not use Codex OAuth or Telegram approval as its primary transport. `HUMAN_APPROVAL` does not use Binance API keys as its primary write transport. Both remain bounded by the same deterministic policy, fresh revalidation, idempotency, reconciliation, emergency stop, and financial-write gate.
+
+**AI proposes. DARWIN authorizes. Binance executes.** The external MCP host may reason, inspect authorized state, propose, and present controls to the owner; it cannot self-approve, inject trusted balances/filters/policy results, supply final Binance arguments, or access unrestricted raw order tools.
 
 ## Service topology
 
 ```text
+External MCP host (HUMAN_APPROVAL)
+  -> DARWIN MCP bearer gate and proposal/control tools
+  -> FastAPI / PostgreSQL
+
 Browser
   -> Next.js frontend (server-side /api rewrite via BACKEND_URL)
   -> FastAPI API
   -> PostgreSQL
   -> worker
-       -> OpenAI or compatible model endpoint
+       -> AUTO_BOUNDED: AgentRuntime / OpenAI-compatible model endpoint
        -> AUTO_BOUNDED: Binance Spot API
-       -> HUMAN_APPROVAL: Codex App Server -> Binance Agent OS MCP
+       -> HUMAN_APPROVAL after explicit approval: Codex App Server -> Binance Agent OS MCP
        -> optional Telegram Bot API
 ```
 
@@ -76,15 +82,16 @@ curl -i http://127.0.0.1:8000/health/live
 curl -i http://127.0.0.1:8000/health/ready
 ```
 
-`/health/ready` requires owner credentials and model configuration in live mode, plus mode-dependent direct Spot credentials for `AUTO_BOUNDED` or `TOKEN_ENCRYPTION_KEY` for `HUMAN_APPROVAL`.
+`/health/ready` is mode-aware. Non-demo readiness always requires owner credentials. `AUTO_BOUNDED` additionally requires the LLM configuration and direct Spot credentials. `HUMAN_APPROVAL` requires `DARWIN_MCP_BEARER_TOKEN`, `TOKEN_ENCRYPTION_KEY`, and genuine provider authorization; it does not require DARWIN `OPENAI_API_KEY`. Readiness is configuration readiness, not funded-order acceptance.
 
 | Claim | Status |
 | --- | --- |
 | Docker JUDGE DEMO, all demo scenarios, and zero durable demo rows | **VERIFIED** in a fresh non-financial Compose run |
 | Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
 | Public-enabled `/showcase` Chromium rendering | **NOT VERIFIED** in this run |
+| MCP-native HUMAN_APPROVAL bearer/tools/list/readiness/proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
 | Live process/transport implementation | **IMPLEMENTED** |
 | Funded direct Spot order | **NOT VERIFIED** |
-| Authenticated Binance Agent OS/Codex acceptance | **PENDING / NOT VERIFIED** |
+| Authenticated external Binance Agent OS/Codex provider acceptance | **PENDING / NOT VERIFIED** |
 
 No deploy, restart, or service mutation is performed by these instructions.

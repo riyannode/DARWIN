@@ -23,10 +23,10 @@ cd ../frontend
 pnpm install --frozen-lockfile
 ```
 
-For live state, set a PostgreSQL `DATABASE_URL`, an Argon2id `OWNER_PASSWORD_HASH`, `OPENAI_API_KEY`, `OPENAI_MODEL`, and exact `FRONTEND_ORIGIN` in `backend/.env`. Then select the mode-specific configuration:
+For live state, set a PostgreSQL `DATABASE_URL`, an Argon2id `OWNER_PASSWORD_HASH`, and exact `FRONTEND_ORIGIN` in `backend/.env`. Then select the mode-specific configuration:
 
-- `AUTO_BOUNDED`: `BINANCE_API_KEY` and `BINANCE_API_SECRET` for the direct Binance Spot API.
-- `HUMAN_APPROVAL`: `TOKEN_ENCRYPTION_KEY`, Codex App Server configuration, and genuine Binance Agent OS OAuth.
+- `AUTO_BOUNDED`: `OPENAI_API_KEY`, `OPENAI_MODEL`, `BINANCE_API_KEY`, and `BINANCE_API_SECRET` for DARWIN's AgentRuntime and direct Binance Spot API.
+- `HUMAN_APPROVAL`: `DARWIN_MCP_BEARER_TOKEN`, `TOKEN_ENCRYPTION_KEY`, Codex App Server transport configuration, and genuine Binance Agent OS OAuth. The external MCP host supplies reasoning; DARWIN does not require `OPENAI_API_KEY` for this mode's readiness.
 
 Optional Telegram must be a complete group of `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OPERATOR_CHAT_ID`, `TELEGRAM_OPERATOR_USER_ID`, and `TELEGRAM_WEBHOOK_SECRET`.
 
@@ -77,8 +77,27 @@ The worker is required for scheduled cycles and durable outbox work. It validate
    Effective Universe = Configured Universe ∩ Allowed Symbols ∩ live-valid Binance Spot/USDT symbols
    ```
 
-6. Select `AUTO_BOUNDED` for direct bounded Spot API execution without per-order approval, or `HUMAN_APPROVAL` for the durable Telegram/web approval flow and Codex + Binance Agent OS MCP transport.
+6. Select `AUTO_BOUNDED` for direct bounded Spot API execution without per-order approval, or `HUMAN_APPROVAL` for the MCP-native external-host proposal and explicit owner approval flow.
 7. Start scheduled operation only after the displayed transport state and profile flags match the intended mode.
+
+## 6.1 MCP-native HUMAN_APPROVAL operation
+
+**AI proposes. DARWIN authorizes. Binance executes.** Configure a compatible external MCP host—such as Codex, Claude Code, Cursor, or ChatGPT—with the private `DARWIN_MCP_BEARER_TOKEN` for `/mcp`.
+
+The host may discover the implemented DARWIN tools, read authorized projections, reason, validate a proposal, submit an untrusted proposal, and present owner controls. The authoritative sequence is:
+
+```text
+read state
+  -> darwin.validate_proposal
+  -> darwin.submit_proposal
+  -> WAITING_FOR_APPROVAL
+  -> explicit owner darwin.approve_trade or darwin.reject_trade
+  -> existing TradeIntentApprovalService
+  -> durable execution outbox / ApprovedExecution
+  -> Codex App Server -> Binance Agent OS MCP
+```
+
+`darwin.validate_proposal` is dry-run only. `darwin.submit_proposal` requires an idempotency key and stops at durable `WAITING_FOR_APPROVAL`; it never places an order. The host/model cannot self-approve, provide trusted balances or filters, inject policy results, or call raw Binance order tools. Provider confirmation remains separate and is never auto-answered by DARWIN.
 
 ## 6. Normal decision and execution path
 
@@ -90,14 +109,15 @@ Effective Universe
   -> typed BUY / SELL / HOLD
   -> deterministic policy, budget, freshness, and emergency-stop checks
   -> financial-write gate
-  -> HUMAN_APPROVAL: Telegram or web authorization -> Codex / Binance Agent OS MCP
+  -> HUMAN_APPROVAL: external MCP host -> DARWIN validate/submit -> WAITING_FOR_APPROVAL
+     -> explicit owner approve/reject through DARWIN MCP -> Codex / Binance Agent OS MCP
      AUTO_BOUNDED: AUTO_POLICY -> direct Binance Spot API
   -> fresh revalidation, account lock, write marker, submission, reconciliation
 ```
 
 Candidate scans use 10 closed `15m` and `1h` candles per effective symbol. Final selected-pair evidence uses 48 closed candles for `15m`, `1h`, and `4h`. Candidate failures exclude only the failed symbol and are persisted in original-cycle evidence. No candidate set produces `NO_EFFECTIVE_SYMBOLS` with no financial work.
 
-Approval cannot change the symbol, side, quantity, price, or final Binance arguments. The approval TTL defaults to 90 seconds and is bounded to 30–180 seconds. Duplicate Telegram/web decisions are idempotent.
+Approval cannot change the symbol, side, quantity, price, or final Binance arguments. The approval TTL defaults to 90 seconds and is bounded to 30–180 seconds. Duplicate MCP submissions and approval decisions are idempotent; existing Telegram/web approval compatibility remains separate from the MCP-native proposal path.
 
 ## 7. Emergency stop and uncertain submission
 
@@ -120,8 +140,9 @@ curl -i http://127.0.0.1:8000/health/ready
 curl -i http://127.0.0.1:8000/docs
 ```
 
-Owner inspection routes include:
+`/health/ready` is mode-aware: non-demo HUMAN_APPROVAL requires the owner hash, `TOKEN_ENCRYPTION_KEY`, and `DARWIN_MCP_BEARER_TOKEN`, but not DARWIN `OPENAI_API_KEY`; AUTO_BOUNDED continues to require the LLM and direct Binance Spot credentials. Readiness is configuration readiness, not funded-order acceptance.
 
+Owner inspection routes include:
 ```text
 GET /api/agent
 GET /api/budget
@@ -138,8 +159,9 @@ Public `GET /api/showcase` is available only in the PUBLIC LIVE SHOWCASE profile
 ## 9. Verification boundary
 
 - **VERIFIED:** fresh non-financial Docker JUDGE DEMO, all demo scenario APIs, zero durable demo rows, and Chromium `/demo` rendering plus scenario selection.
+- **VERIFIED:** MCP-native bearer denial, tools/list, HUMAN_APPROVAL readiness without DARWIN OpenAI key, proposal mode guards, zero durable AUTO_BOUNDED admission work, and normal HUMAN_APPROVAL durable admission checks on the PR #10 feature branch.
 - **IMPLEMENTED:** AgentRuntime, policy, mode transports, durable approval/outbox, write markers, reconciliation, emergency stop, and safe-live closure.
-- **PENDING / NOT VERIFIED:** genuine authenticated Binance Agent OS/Codex acceptance.
+- **PENDING / NOT VERIFIED:** genuine authenticated Binance Agent OS/Codex provider acceptance.
 - **NOT VERIFIED:** PUBLIC LIVE SHOWCASE Chromium under its required live profile; funded AUTO_BOUNDED live order; full authenticated owner-control-panel acceptance.
 
 Stop only processes started for a run. Keep `backend/.env` untracked and never place credentials, cookies, OAuth codes, account values, or private URLs in the repository.
