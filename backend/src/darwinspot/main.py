@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +9,7 @@ from sqlalchemy import text
 
 from darwinspot.api import activity, agent, auth, demo, portfolio, showcase
 from darwinspot.config import get_settings
+from darwinspot.mcp.server import build_mcp_app
 from darwinspot.storage.database import SessionLocal
 from darwinspot.storage.repository import Repository
 
@@ -15,7 +17,16 @@ logging.basicConfig(
     level=getattr(logging, get_settings().log_level.upper(), logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
-app = FastAPI(title="DarwinSpot API", version="0.1.0")
+mcp_app = build_mcp_app(get_settings())
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    async with mcp_app.lifespan_context():
+        yield
+
+
+app = FastAPI(title="DarwinSpot API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[get_settings().frontend_origin],
@@ -23,6 +34,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT"],
     allow_headers=["Content-Type", "X-DarwinSpot-CSRF"],
 )
+app.mount("/mcp", mcp_app)
 app.include_router(auth.router)
 app.include_router(agent.router)
 app.include_router(portfolio.router)

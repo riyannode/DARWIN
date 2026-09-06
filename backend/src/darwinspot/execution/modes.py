@@ -18,6 +18,7 @@ class ExecutionTransport(StrEnum):
 class AuthorizationSource(StrEnum):
     TELEGRAM = "TELEGRAM"
     WEB = "WEB"
+    MCP = "MCP"
     AUTO_POLICY = "AUTO_POLICY"
 
 
@@ -39,8 +40,9 @@ def metadata_for_mode(
             None,
             AuthorizationSource.TELEGRAM,
             AuthorizationSource.WEB,
+            AuthorizationSource.MCP,
         }:
-            raise ValueError("human approval requires TELEGRAM or WEB authorization")
+            raise ValueError("human approval requires TELEGRAM, WEB, or MCP authorization")
         return ExecutionMetadata(
             mode=mode,
             transport=ExecutionTransport.CODEX_AGENT_OS_MCP,

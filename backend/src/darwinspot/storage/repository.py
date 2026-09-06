@@ -197,6 +197,11 @@ class Repository:
             )
         )
 
+    def find_intent_by_idempotency_key(self, idempotency_key: str) -> TradeIntent | None:
+        return self.db.scalar(
+            select(TradeIntent).where(TradeIntent.idempotency_key == idempotency_key).limit(1)
+        )
+
     def non_terminal_intents(self) -> list[TradeIntent]:
         return list(
             self.db.scalars(
@@ -692,6 +697,7 @@ class Repository:
         operator_chat_id: str,
         ttl_seconds: int,
         signal_since: datetime | None = None,
+        idempotency_key: str | None = None,
     ) -> tuple[TradeIntent, TradeIntentApproval]:
         config = self.db.scalar(select(AgentConfig).with_for_update().limit(1))
         policy = self.current_policy()
@@ -714,7 +720,7 @@ class Repository:
         now = now_utc()
         intent = TradeIntent(
             id=new_idempotency_key(),
-            idempotency_key=new_idempotency_key(),
+            idempotency_key=idempotency_key or new_idempotency_key(),
             agent_run_id=run_id,
             pair=str(decision["pair"]),
             side=side,
