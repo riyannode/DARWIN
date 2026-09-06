@@ -703,6 +703,8 @@ class Repository:
         policy = self.current_policy()
         if config is None or policy is None:
             raise ValueError("agent policy is required before creating an intent")
+        if config.mode != ExecutionMode.HUMAN_APPROVAL:
+            raise ValueError("DARWIN is not in HUMAN_APPROVAL mode")
         if config.emergency_stop:
             raise SubmissionBlocked("emergency stop is active")
         mandate = self.current_mandate()
