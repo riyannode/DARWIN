@@ -84,7 +84,7 @@ The worker is required for scheduled cycles and durable outbox work. It validate
 
 **AI proposes. DARWIN authorizes. Binance executes.** Configure a compatible external MCP host—such as Codex, Claude Code, Cursor, or ChatGPT—with the private `DARWIN_MCP_BEARER_TOKEN` for `/mcp`.
 
-The host may discover the implemented DARWIN tools, read authorized projections, reason, validate a proposal, submit an untrusted proposal, and present owner controls. The authoritative sequence is:
+The host may discover the implemented DARWIN tools, read `darwin.get_status`, `darwin.get_mandate`, `darwin.get_budget`, `darwin.get_universe`, and `darwin.get_portfolio`, reason externally, validate a proposal, submit an untrusted proposal, and present owner controls. The authoritative sequence is:
 
 ```text
 read state

@@ -96,6 +96,29 @@ External host reasoning
 
 The MCP host may inspect authorized state, reason, propose, and present controls to the owner. It must not supply trusted balances, Binance filters, policy results, final Binance arguments, or unrestricted raw order tools. Proposal confidence and policy `PASS` are never authorization. The private `/mcp` endpoint is bearer-protected by `DARWIN_MCP_BEARER_TOKEN`; HUMAN_APPROVAL readiness does not require DARWIN `OPENAI_API_KEY`.
 
+### Current implementation and future boundary
+
+Implemented in PR #10:
+
+- inbound private Streamable HTTP MCP at `/mcp`;
+- bearer-protected MCP access and bounded request handling;
+- MCP read projections and the implemented proposal, approval, owner-control, and emergency-stop tools;
+- external-host HUMAN_APPROVAL reasoning seam;
+- untrusted proposal validation and durable proposal submission;
+- explicit approve/reject and provider-confirmation resolution controls;
+- mandate, budget, universe, and emergency-stop owner controls;
+- shared application seams and the current Codex App Server outbound transport.
+
+Still future/planned:
+
+- direct official MCP SDK Binance Agent OS transport replacing the current Codex bridge;
+- full production remote OAuth/CIMD authorization;
+- multi-host/multi-replica remote MCP production hardening;
+- `AUTO_BOUNDED` to `AUTONOMOUS` runtime enum migration; and
+- AUTONOMOUS MCP start/stop/run_once/control additions.
+
+These future items are not current PR #10 implementation claims.
+
 ## Financial-write safety
 
 `DEMO_MODE=true` always blocks writes. With `DEMO_MODE=false` and `FINANCIAL_WRITES_ENABLED=false`, a policy-passing BUY/SELL ends as `FINANCIAL_WRITES_DISABLED` before an intent, approval, or financial transport is invoked.

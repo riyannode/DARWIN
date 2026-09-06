@@ -51,6 +51,8 @@ Candidate evidence supports selection and is retained for audit. Only selected-p
 
 **AI proposes. DARWIN authorizes. Binance executes.** The external host may reason, inspect authorized state, propose, and present controls to the owner. It may not self-approve, supply trusted balances or filters, inject policy results, supply final Binance arguments, or access unrestricted raw order tools. Proposal confidence and policy `PASS` are not authorization. Both modes use the same policy, account-scoped execution lock, idempotency, external-call marker, reconciliation, and audit trail.
 
+The remaining roadmap is explicit: direct official MCP SDK Binance Agent OS transport, production OAuth/CIMD authorization, multi-host/multi-replica remote MCP hardening, `AUTO_BOUNDED` to `AUTONOMOUS` enum migration, and AUTONOMOUS MCP start/stop/run_once controls are not implemented in PR #10.
+
 ## Safety and failure contract
 
 - Spot only: no futures, margin, leverage, options, transfers, or withdrawals.

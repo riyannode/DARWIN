@@ -24,6 +24,8 @@ The checked-in root `docker-compose.yml` is deliberately the **JUDGE DEMO** prof
 - no external LLM call or Binance connection occurs; and
 - `DEMO_MODE=true` blocks financial writes before an order, cancellation, transfer, or withdrawal transport can be reached.
 
+This root Compose runtime is not a live HUMAN_APPROVAL deployment manifest.
+
 The demo exposes three backend-computed scenarios:
 
 | Scenario | Model decision | Deterministic result | System outcome |
