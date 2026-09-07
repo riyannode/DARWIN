@@ -73,7 +73,7 @@ A `HOLD` is a model decision. `SKIPPED` is a system outcome. Policy rejection, s
 | Mode | Authorization | Evidence and transport | Approval semantics |
 | --- | --- | --- | --- |
 | `AUTO_BOUNDED` | `AUTO_POLICY` after policy admission | The direct backend-only **Binance Spot API** supplies exchange metadata, ticker, account, open orders, recent trades, filters, order submit/query, and emergency cancel. | No per-order human approval, Codex OAuth, or Telegram approval. |
-| `HUMAN_APPROVAL` | external MCP proposal plus explicit owner approval through DARWIN MCP | The inbound DARWIN MCP control plane admits a durable approval intent; approved execution uses Codex App Server + **Binance Agent OS** MCP. | Proposal and owner approval are separate events. The external host cannot self-approve. |
+| `HUMAN_APPROVAL` | external MCP proposal plus explicit owner approval through DARWIN MCP | The inbound DARWIN MCP control plane admits a durable approval intent; approved execution uses Codex App Server + **Binance Agent OS** MCP. | Proposal and owner approval are separate events. The external host must not self-approve a proposal; `darwin.approve_trade` is intended only after explicit owner direction. |
 
 Both modes use a fresh revalidation, account-scoped lock, current policy/budget, idempotency key, write request hash, external-call marker, durable outbox, and reconciliation. `HUMAN_APPROVAL` can stop at a further observed Codex/Binance confirmation; DARWIN never auto-answers it. `CODEX_WRITE_CONFIRMATION_VERIFIED=false` blocks HUMAN_APPROVAL financial submission pending manual provider-contract verification.
 

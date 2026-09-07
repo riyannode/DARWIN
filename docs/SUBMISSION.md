@@ -39,7 +39,7 @@ DARWIN MCP read tools
   -> provider confirmation where applicable -> Binance
 ```
 
-The external host/model cannot self-approve, provide trusted balances, filters, policy results, final Binance arguments, or unrestricted raw order tools. Proposal confidence and policy `PASS` remain separate from owner authorization. Open the private `/mcp` endpoint with `DARWIN_MCP_BEARER_TOKEN`; no external provider authentication is required to inspect or reproduce the repository's judge demo.
+The external host/model must not self-approve a proposal. `darwin.approve_trade` is intended only for explicit owner-directed approval. Proposal confidence and deterministic policy `PASS` never constitute approval. The host cannot provide trusted balances, filters, policy results, final Binance arguments, or unrestricted raw order tools. Open the private `/mcp` endpoint with `DARWIN_MCP_BEARER_TOKEN`; no external provider authentication is required to inspect or reproduce the repository's judge demo.
 
 ### Implemented MCP control surface
 

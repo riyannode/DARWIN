@@ -27,7 +27,7 @@ The financial-write setting is enforced at safe-live decision admission and agai
 
 `AUTO_BOUNDED` does not use Codex OAuth or Telegram approval as its primary transport. `HUMAN_APPROVAL` does not use Binance API keys as its primary write transport. Both remain bounded by the same deterministic policy, fresh revalidation, idempotency, reconciliation, emergency stop, and financial-write gate.
 
-**AI proposes. DARWIN authorizes. Binance executes.** The external MCP host may reason, inspect authorized state, propose, and present controls to the owner; it cannot self-approve, inject trusted balances/filters/policy results, supply final Binance arguments, or access unrestricted raw order tools.
+**AI proposes. DARWIN authorizes. Binance executes.** The external MCP host may reason, inspect authorized state, propose, and present controls to the owner; it must not self-approve a proposal. `darwin.approve_trade` is intended only after explicit owner direction, and proposal confidence or deterministic policy `PASS` never constitutes approval. The host cannot inject trusted balances/filters/policy results, supply final Binance arguments, or access unrestricted raw order tools.
 
 ## Service topology
 

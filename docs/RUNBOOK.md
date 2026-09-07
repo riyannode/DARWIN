@@ -97,7 +97,7 @@ read state
   -> Codex App Server -> Binance Agent OS MCP
 ```
 
-`darwin.validate_proposal` is dry-run only. `darwin.submit_proposal` requires an idempotency key and stops at durable `WAITING_FOR_APPROVAL`; it never places an order. The host/model cannot self-approve, provide trusted balances or filters, inject policy results, or call raw Binance order tools. Provider confirmation remains separate and is never auto-answered by DARWIN.
+`darwin.validate_proposal` is dry-run only. `darwin.submit_proposal` requires an idempotency key and stops at durable `WAITING_FOR_APPROVAL`; it never places an order. The host/model must not self-approve a proposal. `darwin.approve_trade` is intended only after explicit owner direction, and proposal confidence or deterministic policy `PASS` never constitutes approval. The host cannot provide trusted balances or filters, inject policy results, or call raw Binance order tools. Provider confirmation remains separate and is never auto-answered by DARWIN.
 
 ## 6. Normal decision and execution path
 
