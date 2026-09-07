@@ -66,7 +66,9 @@ async def update_universe(
             client = build_binance_client(settings, connection, mode=config.mode)
             catalog = ToolCatalog(await client.discover_tools())
             market_universe = map_spot_market_universe(
-                await client.call_tool(catalog.arguments("market_universe", {}))
+                await client.call_tool(
+                    catalog.arguments("market_universe", {"symbols": values})
+                )
             )
             live = {str(item["symbol"]): item for item in market_universe}
             for symbol in additions:

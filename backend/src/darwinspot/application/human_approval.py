@@ -304,7 +304,11 @@ class HumanApprovalApplication:
         try:
             catalog = ToolCatalog(await client.discover_tools())
             live_market = map_spot_market_universe(
-                await client.call_tool(catalog.arguments("market_universe", {}))
+                await client.call_tool(
+                    catalog.arguments(
+                        "market_universe", {"symbols": sorted(policy.configured_symbols)}
+                    )
+                )
             )
             universe = effective_symbols(
                 self.repo.supported_symbols(), policy.allowed_symbols, live_market

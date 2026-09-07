@@ -82,7 +82,9 @@ async def live_universe_projection(db: Session) -> dict[str, Any]:
         )
         catalog = ToolCatalog(await client.discover_tools())
         live = map_spot_market_universe(
-            await client.call_tool(catalog.arguments("market_universe", {}))
+            await client.call_tool(
+                catalog.arguments("market_universe", {"symbols": base["configuredSymbols"]})
+            )
         )
         allowed = set(base["allowedSymbols"])
         configured = set(base["configuredSymbols"])

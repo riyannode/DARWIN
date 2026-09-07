@@ -406,7 +406,11 @@ class ApprovedExecution:
         if policy is None:
             raise ExecutionUnavailable("current policy is required")
         market_universe = map_spot_market_universe(
-            await self.client.call_tool(catalog.arguments("market_universe", {}))
+            await self.client.call_tool(
+                catalog.arguments(
+                    "market_universe", {"symbols": self.repo.supported_symbols()}
+                )
+            )
         )
         live_universe = effective_symbols(
             self.repo.supported_symbols(), policy.allowed_symbols, market_universe

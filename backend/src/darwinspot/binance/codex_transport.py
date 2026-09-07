@@ -65,6 +65,9 @@ class CodexElicitation:
 
 ElicitationAction = Literal["accept", "decline", "cancel"]
 _pending_confirmations: dict[str, tuple[CodexAppServerTransport, int | str]] = {}
+_CODEX_STREAM_LIMIT = 4 * 1024 * 1024
+_TOOL_SEARCH_NAME = "tool_search"
+_TOOL_SEARCH_CATEGORIES = ("general", "market", "account", "trade")
 
 
 def remember_pending_confirmation(
@@ -149,6 +152,7 @@ class CodexAppServerTransport:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self.cwd,
+                limit=_CODEX_STREAM_LIMIT,
             )
             await self.initialize()
             await self._send_message({"jsonrpc": "2.0", "method": "initialized", "params": {}})
@@ -237,9 +241,14 @@ class CodexAppServerTransport:
         tool: str,
         arguments: dict[str, Any],
         thread_id: str | None = None,
+        check_auth: bool = True,
     ) -> CodexToolResult:
-        status = await self.status(detail="toolsAndAuthOnly")
-        if status.auth_state != CodexAuthState.CONNECTED:
+        if check_auth:
+            status = await self.status(detail="toolsAndAuthOnly")
+            auth_state = status.auth_state
+        else:
+            auth_state = self.auth_state
+        if auth_state != CodexAuthState.CONNECTED:
             raise CodexAuthRequired("Binance Agent OS authentication is required")
         active_thread = thread_id or self._thread_id
         if active_thread is None:
@@ -319,7 +328,16 @@ class CodexAppServerTransport:
         if self._process is None or self._process.stdout is None:
             self.auth_state = CodexAuthState.UNAVAILABLE
             raise CodexTransportError("Codex App Server is not running")
-        raw = await asyncio.wait_for(self._process.stdout.readline(), timeout=60)
+        try:
+            raw = await asyncio.wait_for(self._process.stdout.readline(), timeout=60)
+        except ValueError as exc:
+            raise CodexTransportError(
+                "Codex App Server response exceeded bounded line limit"
+            ) from exc
+        except TimeoutError as exc:
+            raise CodexTransportError("Codex App Server read timed out") from exc
+        except (asyncio.IncompleteReadError, OSError) as exc:
+            raise CodexTransportError("Codex App Server read failed") from exc
         if not raw:
             self.auth_state = CodexAuthState.UNAVAILABLE
             raise CodexTransportError("Codex App Server closed its output")
@@ -408,11 +426,46 @@ class CodexBinanceClient:
         self.transport = transport
 
     async def discover_tools(self) -> list[ToolDescriptor]:
-        status = await self.transport.status(detail="full")
+        status = await self.transport.status(detail="toolsAndAuthOnly")
         if status.auth_state != CodexAuthState.CONNECTED:
             raise CodexAuthRequired("Binance Agent OS authentication is required")
+        descriptors = self._status_descriptors(status.tools)
+        search_tool = next(
+            (descriptor for descriptor in descriptors if descriptor.name == _TOOL_SEARCH_NAME),
+            None,
+        )
+        if search_tool is None:
+            return descriptors
+        discovered = {descriptor.name: descriptor for descriptor in descriptors}
+        for category in self._search_categories(search_tool):
+            cursor: str | None = None
+            seen_cursors: set[str] = set()
+            while True:
+                arguments: dict[str, Any] = {"category": category}
+                if cursor is not None:
+                    arguments["cursor"] = cursor
+                payload = self._result_payload(
+                    await self.transport.call_tool(
+                        tool=search_tool.name,
+                        arguments=arguments,
+                        check_auth=False,
+                    )
+                )
+                page, next_cursor = self._search_page(payload)
+                for descriptor in page:
+                    discovered.setdefault(descriptor.name, descriptor)
+                if next_cursor is None:
+                    break
+                if next_cursor in seen_cursors:
+                    raise CodexTransportError("Codex tool search returned a repeated cursor")
+                seen_cursors.add(next_cursor)
+                cursor = next_cursor
+        return list(discovered.values())
+
+    @staticmethod
+    def _status_descriptors(tools: dict[str, Any]) -> list[ToolDescriptor]:
         descriptors: list[ToolDescriptor] = []
-        for name, raw in status.tools.items():
+        for name, raw in tools.items():
             tool = cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
             raw_schema = tool.get("inputSchema")
             schema = cast(dict[str, Any], raw_schema) if isinstance(raw_schema, dict) else {}
@@ -427,6 +480,63 @@ class CodexBinanceClient:
             raise CodexTransportError("Codex reported no authenticated Binance tools")
         return descriptors
 
+    @staticmethod
+    def _search_categories(tool: ToolDescriptor) -> tuple[str, ...]:
+        raw_properties = tool.input_schema.get("properties")
+        if not isinstance(raw_properties, dict):
+            raise CodexTransportError("Codex tool search schema is invalid")
+        properties = cast(dict[str, Any], raw_properties)
+        raw_category = properties.get("category")
+        if not isinstance(raw_category, dict):
+            raise CodexTransportError("Codex tool search category schema is invalid")
+        category = cast(dict[str, Any], raw_category)
+        raw_enum = category.get("enum")
+        if not isinstance(raw_enum, list):
+            raise CodexTransportError("Codex tool search category enum is invalid")
+        enum = cast(list[Any], raw_enum)
+        if not all(isinstance(item, str) for item in enum):
+            raise CodexTransportError("Codex tool search category enum is invalid")
+        available = set(cast(list[str], enum))
+        categories = tuple(
+            category_name
+            for category_name in _TOOL_SEARCH_CATEGORIES
+            if category_name in available
+        )
+        if not categories:
+            raise CodexTransportError("Codex tool search exposes no required categories")
+        return categories
+
+    @classmethod
+    def _search_page(cls, payload: Any) -> tuple[list[ToolDescriptor], str | None]:
+        if not isinstance(payload, dict):
+            raise CodexTransportError("Codex tool search response is invalid")
+        value = cast(dict[str, Any], payload)
+        raw_tools = value.get("tools")
+        if not isinstance(raw_tools, list):
+            raise CodexTransportError("Codex tool search response omitted tools")
+        descriptors: list[ToolDescriptor] = []
+        for raw_value in cast(list[Any], raw_tools):
+            if not isinstance(raw_value, dict):
+                raise CodexTransportError("Codex tool search returned an invalid tool")
+            raw = cast(dict[str, Any], raw_value)
+            name = raw.get("name")
+            if not isinstance(name, str) or not name:
+                raise CodexTransportError("Codex tool search returned an unnamed tool")
+            raw_schema = raw.get("inputSchema")
+            if not isinstance(raw_schema, dict):
+                raise CodexTransportError(f"MCP tool {name} has no input schema")
+            descriptors.append(
+                ToolDescriptor(
+                    name=name,
+                    description=str(raw.get("description") or ""),
+                    input_schema=cast(dict[str, Any], raw_schema),
+                )
+            )
+        next_cursor = value.get("nextCursor")
+        if next_cursor is not None and not isinstance(next_cursor, str):
+            raise CodexTransportError("Codex tool search cursor is invalid")
+        return descriptors, next_cursor
+
     async def call_tool(self, call: ToolCall) -> Any:
         if self._is_write(call.tool):
             ensure_financial_write_allowed()
@@ -434,9 +544,16 @@ class CodexBinanceClient:
                 raise CodexTransportError(
                     "Binance write confirmation capability is unverified; write blocked"
                 )
-        result = await self.transport.call_tool(tool=call.tool.name, arguments=call.arguments)
+        result = await self.transport.call_tool(
+            tool=call.tool.name,
+            arguments=self._wire_arguments(call),
+        )
         if result.is_error:
             raise CodexTransportError(f"Codex Binance tool {call.tool.name} returned an error")
+        return self._result_payload(result)
+
+    @staticmethod
+    def _result_payload(result: CodexToolResult) -> Any:
         if result.structured_content is not None:
             return result.structured_content
         values: list[Any] = []
@@ -449,10 +566,31 @@ class CodexBinanceClient:
             try:
                 values.append(json.loads(item_value["text"]))
             except json.JSONDecodeError as exc:
-                raise CodexTransportError("Codex Binance tool returned non-JSON content") from exc
+                raise CodexTransportError(
+                    "Codex Binance tool returned non-JSON content"
+                ) from exc
         if len(values) != 1:
             raise CodexTransportError("Codex Binance tool returned unsupported content")
         return values[0]
+
+    @staticmethod
+    def _wire_arguments(call: ToolCall) -> dict[str, Any]:
+        properties = call.tool.input_schema.get("properties")
+        if not isinstance(properties, dict):
+            return call.arguments
+        typed_properties = cast(dict[str, Any], properties)
+        wire_arguments = dict(call.arguments)
+        raw_symbols = wire_arguments.get("symbols")
+        symbol_schema = typed_properties.get("symbols")
+        typed_symbol_schema = (
+            cast(dict[str, Any], symbol_schema) if isinstance(symbol_schema, dict) else {}
+        )
+        if (
+            isinstance(raw_symbols, list)
+            and typed_symbol_schema.get("type") == "array"
+        ):
+            wire_arguments["symbols"] = json.dumps(raw_symbols, separators=(",", ":"))
+        return wire_arguments
 
     @staticmethod
     def _is_write(tool: ToolDescriptor) -> bool:
@@ -468,4 +606,4 @@ class CodexBinanceClient:
                 "withdraw",
                 "transfer",
             )
-        )
+        ) or "(trade)" in text
