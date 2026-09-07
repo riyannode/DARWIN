@@ -77,6 +77,8 @@ A `HOLD` is a model decision. `SKIPPED` is a system outcome. Policy rejection, s
 
 Both modes use a fresh revalidation, account-scoped lock, current policy/budget, idempotency key, write request hash, external-call marker, durable outbox, and reconciliation. `HUMAN_APPROVAL` can stop at a further observed Codex/Binance confirmation; DARWIN never auto-answers it. `CODEX_WRITE_CONFIRMATION_VERIFIED=false` blocks HUMAN_APPROVAL financial submission pending manual provider-contract verification.
 
+The single worker processes durable outbox, approval-expiry, confirmation, notification, emergency-cancellation, and reconciliation work in both modes. It schedules `AgentRuntime` cycles only for `AUTO_BOUNDED`; `HUMAN_APPROVAL` does not use the REST scheduled-start or run-once reasoning controls.
+
 ### MCP-native HUMAN_APPROVAL flow
 
 **AI proposes. DARWIN authorizes. Binance executes.** A compatible external MCP host—such as Codex, Claude Code, Cursor, or ChatGPT—owns reasoning and proposal generation. DARWIN owns the Trading Mandate, budget, universe, deterministic policy, durable state, financial-write gate, safety, and reconciliation.

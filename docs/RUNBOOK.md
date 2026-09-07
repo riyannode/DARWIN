@@ -63,7 +63,7 @@ BACKEND_URL=http://127.0.0.1:8000 pnpm build
 HOSTNAME=127.0.0.1 PORT=3000 pnpm start
 ```
 
-The worker is required for scheduled cycles and durable outbox work. It validates model configuration and records provider/auth failures without fabricating Binance state. FastAPI without the worker is not a complete live operation.
+The worker is required for `AUTO_BOUNDED` scheduled cycles and durable outbox work in both modes. It validates model configuration when `AUTO_BOUNDED` scheduling is active and records provider/auth failures without fabricating Binance state. `HUMAN_APPROVAL` does not schedule internal `AgentRuntime` reasoning. FastAPI without the worker is not a complete live operation.
 
 ## 5. Configure DARWIN as owner
 
@@ -78,7 +78,7 @@ The worker is required for scheduled cycles and durable outbox work. It validate
    ```
 
 6. Select `AUTO_BOUNDED` for direct bounded Spot API execution without per-order approval, or `HUMAN_APPROVAL` for the MCP-native external-host proposal and explicit owner approval flow.
-7. Start scheduled operation only after the displayed transport state and profile flags match the intended mode.
+7. Start scheduled `AUTO_BOUNDED` operation only after the displayed transport state and profile flags match the intended mode. `HUMAN_APPROVAL` uses the MCP control plane instead of internal scheduled reasoning.
 
 ## 6.1 MCP-native HUMAN_APPROVAL operation
 

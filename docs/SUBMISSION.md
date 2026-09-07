@@ -10,7 +10,7 @@ DARWIN is an owner-operated Binance Spot decision and execution runtime with two
 - Pair selection and final `BUY`/`SELL`/`HOLD` decisions are validated as strict Pydantic models. The decision includes confidence, rationale, supporting factors, and risk factors.
 - A newly created Configured Universe bootstraps to `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`, and `XRPUSDT` and accepts up to 100 validated Spot/USDT symbols. A database upgraded from before `0004_dual_execution_and_universe` can retain the migration's four-symbol compatibility value (`BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`) until an owner updates it.
 - The Effective Universe is `Configured Universe ∩ Allowed Symbols ∩ live-valid Binance Spot/USDT symbols`.
-- The worker scans all effective candidates, selects one pair, records selected-pair evidence, and applies deterministic policy before any execution work.
+- The `AUTO_BOUNDED` worker scans all effective candidates, selects one pair, records selected-pair evidence, and applies deterministic policy before any execution work; the `HUMAN_APPROVAL` worker processes durable external proposals and execution work without internal model reasoning.
 - `AUTO_BOUNDED` uses the direct, backend-only **Binance Spot API**. `HUMAN_APPROVAL` is MCP-native: an external MCP-compatible host reasons and proposes through DARWIN's private MCP control plane, while DARWIN validates, authorizes, and persists the durable approval state.
 - The backend owns policy, budget, balances, filters, freshness, open-order conflict, emergency stop, idempotency, external-call uncertainty, reconciliation, and the financial-write gate. The external host/model and Codex cannot override those controls.
 

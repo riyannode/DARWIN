@@ -4,7 +4,7 @@
 
 The repository ships one `docker-compose.yml`. It is intentionally the **JUDGE DEMO** runtime, using local SQLite and `DEMO_MODE=true`; it is not a live-trading deployment manifest or a live HUMAN_APPROVAL deployment manifest.
 
-A live deployment needs managed processes for the API, the worker, the frontend, and PostgreSQL. The worker is required for scheduled decision cycles, approval expiry, execution/confirmation work, notification outbox work, and emergency-cancellation work. Starting FastAPI alone is not a complete live operation.
+A live deployment needs managed processes for the API, the worker, the frontend, and PostgreSQL. The worker is required for `AUTO_BOUNDED` scheduled decision cycles and for both modes' approval expiry, execution/confirmation work, notification outbox work, and emergency-cancellation work. Starting FastAPI alone is not a complete live operation.
 
 ## Runtime profiles
 

@@ -33,7 +33,7 @@ Effective Universe = Configured Universe ∩ Allowed Symbols ∩ live-valid Bina
 
 DARWIN's custom `AgentRuntime` uses the OpenAI SDK and optional OpenAI-compatible `OPENAI_BASE_URL`. Pydantic validates strict pair-selection and decision output; Pydantic is not the agent framework.
 
-Each cycle:
+Each `AUTO_BOUNDED` AgentRuntime cycle:
 
 1. derives the Effective Universe;
 2. scans every effective candidate using 10 closed `15m` and `1h` candles;

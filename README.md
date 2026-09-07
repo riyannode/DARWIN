@@ -72,6 +72,8 @@ Owner mutations require an owner session and CSRF validation. The public showcas
 
 DARWIN has two architectural execution paths. The scheduled `AUTO_BOUNDED` path uses a custom `AgentRuntime`; Pydantic is used for typed model-output validation, not as an agent framework. The MCP-native `HUMAN_APPROVAL` path uses an external MCP-compatible host for reasoning and proposal generation, while DARWIN remains the authorization authority.
 
+One mode-aware worker processes durable work for both paths. It schedules `AgentRuntime` only for `AUTO_BOUNDED`; `HUMAN_APPROVAL` does not use internal scheduled or REST run-once reasoning, and does not require DARWIN `OPENAI_API_KEY` for its reasoning path.
+
 1. In `AUTO_BOUNDED`, the worker computes the **Effective Universe** from the **Configured Universe** ∩ **Allowed Symbols** ∩ currently valid Binance Spot/USDT symbols with required filters.
 2. The AUTO_BOUNDED worker scans every effective candidate with bounded closed `15m` and `1h` OHLCV evidence, then `AgentRuntime.choose_pair()` selects one pair.
 3. The AUTO_BOUNDED final model call receives only selected-pair evidence: current ticker, closed `15m`/`1h`/`4h` history, balances, open orders, recent activity, filters, Trading Mandate, policy, and budget.

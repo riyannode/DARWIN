@@ -138,6 +138,9 @@ def put_mode(
         )
     previous_mode = config.mode
     config.mode = request.mode
+    if request.mode == ExecutionMode.HUMAN_APPROVAL:
+        config.state = AgentState.STOPPED
+        config.next_run_at = None
     db.commit()
     repo.record_audit_event(
         trigger="EXECUTION_MODE_CHANGED",
@@ -154,6 +157,11 @@ def start_agent(
 ) -> dict[str, str]:
     repo = Repository(db)
     config = repo.get_or_create_agent()
+    if config.mode != ExecutionMode.AUTO_BOUNDED:
+        raise HTTPException(
+            status_code=409,
+            detail="scheduled AgentRuntime is only available in AUTO_BOUNDED mode",
+        )
     if config.emergency_stop:
         raise HTTPException(status_code=409, detail="emergency stop is active")
     if not get_settings().openai_api_key:
@@ -182,6 +190,11 @@ async def run_once(
     repo = Repository(db)
     settings = get_settings()
     config = repo.get_or_create_agent()
+    if config.mode != ExecutionMode.AUTO_BOUNDED:
+        raise HTTPException(
+            status_code=409,
+            detail="internal run-once reasoning is AUTO_BOUNDED-only",
+        )
     connection = repo.current_connection()
     if not settings.openai_api_key:
         raise HTTPException(status_code=503, detail="OPENAI_API_KEY is required for a real run")
