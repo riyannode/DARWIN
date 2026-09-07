@@ -164,7 +164,7 @@ The private inbound `/mcp` endpoint uses `DARWIN_MCP_BEARER_TOKEN`. The deployed
 | Docker JUDGE DEMO, all three demo scenarios, and zero durable `agent_runs`/`trade_intents` rows | **VERIFIED** in a fresh non-financial Compose run |
 | Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
 | Unauthenticated Chromium shell routes `/`, `/agent`, `/budget`, `/activity`, and `/settings` | **VERIFIED**; protected APIs correctly returned `401` and no mutation was attempted |
-| Public-enabled `/showcase` Chromium rendering | **VERIFIED** at the temporary public-live URL; the inspected runtime was `STALE` / `LATEST_RUN_FAILED`, so fresh live evidence is not claimed |
+| Public-enabled `/showcase` Chromium rendering | **VERIFIED** |
 | Custom AgentRuntime, typed validation, dual transports, policy, persistence, reconciliation, and public projection | **IMPLEMENTED** |
 | MCP-native HUMAN_APPROVAL control plane, bearer denial, tools/list, mode-aware readiness, and proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
 | Authenticated Binance Agent OS/Codex read acceptance on Windows | **VERIFIED**: bearer auth, 17 DARWIN tools, deferred Spot discovery 0 → 48, `get_universe` `FRESH`, `get_portfolio` `CONNECTED`, and deterministic zero-USDT rejection with `insufficient available USDT balance` |

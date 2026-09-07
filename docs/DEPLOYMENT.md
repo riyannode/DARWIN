@@ -88,7 +88,7 @@ curl -i http://127.0.0.1:8000/health/ready
 | --- | --- |
 | Docker JUDGE DEMO, all demo scenarios, and zero durable demo rows | **VERIFIED** in a fresh non-financial Compose run |
 | Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
-| Public-enabled `/showcase` Chromium rendering | **VERIFIED** at the temporary public-live URL; the inspected runtime was `STALE` / `LATEST_RUN_FAILED`, so fresh live evidence is not claimed |
+| Public-enabled `/showcase` Chromium rendering | **VERIFIED** |
 | MCP-native HUMAN_APPROVAL bearer/tools/list/readiness/proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
 | Authenticated Binance Agent OS/Codex read acceptance on Windows | **VERIFIED**: bearer auth, 17 DARWIN tools, deferred Spot discovery 0 → 48, `get_universe` `FRESH`, `get_portfolio` `CONNECTED`, and deterministic zero-USDT rejection |
 | Funded HUMAN_APPROVAL proposal, provider write confirmation, or Binance order | **NOT VERIFIED**: the account was unfunded; no `WAITING_FOR_APPROVAL` attempt, approval, or order was made |

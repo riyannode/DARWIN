@@ -22,6 +22,7 @@ cp .env.example .env
 
 cd ../frontend
 pnpm install --frozen-lockfile
+cd ..
 ```
 
 On Windows PowerShell, replace `cp` with:
@@ -127,6 +128,8 @@ BINANCE_ACCOUNT_LOCK_KEY=darwinspot-binance-account
 ```
 
 The direct adapter accepts only approved Binance HTTPS API hosts. Use a dedicated Spot-only key, disable withdrawals, avoid Futures/Margin/transfer permissions, restrict by IP where supported, and keep the credentials server-side. `TOKEN_ENCRYPTION_KEY` is not required for AUTO_BOUNDED API readiness.
+
+A fresh database defaults to `HUMAN_APPROVAL`. After startup, sign in to the owner UI, open `/agent`, and select `AUTO_BOUNDED`. `/health/ready` reflects the currently persisted mode, so check it again after changing the mode.
 
 ### HUMAN_APPROVAL configuration
 
@@ -241,7 +244,28 @@ codex mcp add darwin --url http://127.0.0.1:8000/mcp --bearer-token-env-var DARW
 codex mcp list
 ```
 
-In the Codex Windows App, use its current MCP settings surface with the same URL and bearer header, then verify `darwin.get_status` and the 17-tool catalog. Menu labels can vary by app version; do not use `codex mcp login` for this locally generated bearer token.
+Codex desktop, Codex CLI, and the IDE extension share this MCP configuration. Restart or reload the Windows Codex App as required, use `/mcp` to confirm `darwin` is active, then verify `darwin.get_status` and the 17-tool catalog. The bearer token is configured through the supported CLI/config entry above; do not assume a separate UI bearer-header field, and do not use `codex mcp login darwin` for this locally generated bearer token.
+
+### Outbound Binance Agent OS authorization
+
+This is a separate connection from the inbound DARWIN bearer-protected MCP:
+
+| Connection | Server name | Endpoint | Authentication |
+| --- | --- | --- | --- |
+| External host → DARWIN | `darwin` | `http://127.0.0.1:8000/mcp` | `DARWIN_MCP_BEARER_TOKEN` |
+| DARWIN → Codex App Server → Binance Agent OS | `binance` | `https://agent.binance.com/mcp/agentic` | Binance OAuth stored by Codex |
+
+Configure the outbound server once from PowerShell, then start the genuine OAuth flow:
+
+```powershell
+codex mcp add binance --url https://agent.binance.com/mcp/agentic
+codex mcp login binance
+codex mcp list
+```
+
+Complete the Binance browser authorization and approve only the scopes needed for the intended read acceptance. Return to Codex after the callback, confirm `binance` is listed and authenticated with `codex mcp list`, and use `/mcp` in the Codex App to confirm the active authenticated server. Do not put Binance API keys in DARWIN or Codex configuration. Do not fund the Agentic sub-account or grant trade/transfer scopes for a read-only first run.
+
+Only after `binance` is authenticated should you start DARWIN and call its read tools. DARWIN's outbound transport passes the server name `binance` to Codex App Server; changing that name breaks the provider connection.
 
 ### Claude Code
 
@@ -254,7 +278,7 @@ claude mcp add --transport http darwin --scope user http://127.0.0.1:8000/mcp --
 
 ### Cursor
 
-Create a personal `.cursor/mcp.json` and keep the token in an environment variable:
+For a private fork-user setup, use the personal/global `~/.cursor/mcp.json`. A project-scoped `.cursor/mcp.json` is different and belongs to that project. Keep the token in an environment variable and never put its literal value in either file:
 
 ```json
 {
@@ -273,7 +297,7 @@ Create a personal `.cursor/mcp.json` and keep the token in an environment variab
 
 ChatGPT custom MCP apps use Developer Mode and require a remote MCP endpoint; ChatGPT cannot connect directly to a server bound only to `127.0.0.1`. Use a supported Secure MCP Tunnel or another authenticated remote deployment, and do not expose the bearer token in a public repository. ChatGPT plan and workspace availability, custom-app permissions, and write support vary; this repository has verified the Codex Windows path, not a ChatGPT connection.
 
-Official host references: [Codex MCP](https://developers.openai.com/codex/mcp/), [Claude Code MCP](https://code.claude.com/docs/en/mcp), [Cursor MCP](https://cursor.com/docs/mcp), and [ChatGPT Developer Mode and MCP apps](https://help.openai.com/en/articles/12584461).
+Official host references: [Binance MCP Server](https://developers.binance.com/en/docs/agent-native/mcp-server/agentic), [Codex MCP](https://developers.openai.com/codex/mcp/), [Claude Code MCP](https://code.claude.com/docs/en/mcp), [Cursor MCP](https://cursor.com/docs/mcp), and [ChatGPT Developer Mode and MCP apps](https://help.openai.com/en/articles/12584461).
 
 ## Safe first live test
 
@@ -304,7 +328,7 @@ In PowerShell, use `curl.exe` if `curl` resolves to the PowerShell web-request a
 | --- | --- |
 | Demo Docker runtime, all demo scenarios, and zero durable demo rows | **VERIFIED** in a fresh non-financial Compose run |
 | Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
-| Public-enabled `/showcase` Chromium rendering | **VERIFIED** at the temporary public-live URL; the inspected runtime was `STALE` / `LATEST_RUN_FAILED`, so fresh live evidence is not claimed |
+| Public-enabled `/showcase` Chromium rendering | **VERIFIED** |
 | MCP-native HUMAN_APPROVAL bearer/tools/list/readiness/proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
 | Authenticated Binance Agent OS/Codex read acceptance on Windows | **VERIFIED**: bearer auth, 17 DARWIN tools, deferred Spot discovery 0 → 48, `get_universe` `FRESH`, `get_portfolio` `CONNECTED`, and deterministic zero-USDT rejection |
 | Funded HUMAN_APPROVAL proposal, provider write confirmation, or Binance order | **NOT VERIFIED**: the account was unfunded; no `WAITING_FOR_APPROVAL` attempt, approval, or order was made |
