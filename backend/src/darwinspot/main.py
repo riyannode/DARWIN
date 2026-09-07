@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +9,8 @@ from sqlalchemy import text
 
 from darwinspot.api import activity, agent, auth, demo, portfolio, showcase
 from darwinspot.config import get_settings
+from darwinspot.execution.modes import ExecutionMode
+from darwinspot.mcp.server import build_mcp_app
 from darwinspot.storage.database import SessionLocal
 from darwinspot.storage.repository import Repository
 
@@ -15,7 +18,16 @@ logging.basicConfig(
     level=getattr(logging, get_settings().log_level.upper(), logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
-app = FastAPI(title="DarwinSpot API", version="0.1.0")
+mcp_app = build_mcp_app(get_settings())
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    async with mcp_app.lifespan_context():
+        yield
+
+
+app = FastAPI(title="DarwinSpot API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[get_settings().frontend_origin],
@@ -23,6 +35,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT"],
     allow_headers=["Content-Type", "X-DarwinSpot-CSRF"],
 )
+app.mount("/mcp", mcp_app)
 app.include_router(auth.router)
 app.include_router(agent.router)
 app.include_router(portfolio.router)
@@ -41,13 +54,16 @@ def ready() -> dict[str, str]:
     settings = get_settings()
     with SessionLocal() as db:
         mode = Repository(db).get_or_create_agent().mode
-        missing_human_auth = mode == "HUMAN_APPROVAL" and not settings.token_encryption_key
-        missing_auto_credentials = mode == "AUTO_BOUNDED" and (
+        missing_human_auth = mode == ExecutionMode.HUMAN_APPROVAL and (
+            not settings.token_encryption_key or not settings.darwin_mcp_bearer_token
+        )
+        missing_auto_llm = mode == ExecutionMode.AUTO_BOUNDED and not settings.openai_api_key
+        missing_auto_credentials = mode == ExecutionMode.AUTO_BOUNDED and (
             not settings.binance_api_key or not settings.binance_api_secret
         )
         if not settings.demo_mode and (
             not settings.owner_password_hash
-            or not settings.openai_api_key
+            or missing_auto_llm
             or missing_human_auth
             or missing_auto_credentials
         ):

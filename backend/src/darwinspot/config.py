@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     codex_app_server_command: str = "codex app-server --stdio"
     codex_app_server_version: str = "0.153.0"
     codex_write_confirmation_verified: bool = False
+    darwin_mcp_bearer_token: str | None = None
     log_level: str = "INFO"
 
     @field_validator("openai_api_key")
@@ -109,6 +110,13 @@ class Settings(BaseSettings):
     @classmethod
     def validate_binance_url(cls, value: str) -> str:
         return validate_binance_spot_base_url(value)
+
+    @field_validator("darwin_mcp_bearer_token")
+    @classmethod
+    def validate_mcp_bearer_token(cls, value: str | None) -> str | None:
+        if value is not None and (not value or any(char.isspace() for char in value)):
+            raise ValueError("DARWIN_MCP_BEARER_TOKEN must not be empty or contain whitespace")
+        return value
 
     @model_validator(mode="after")
     def validate_telegram_configuration(self) -> Settings:

@@ -1,6 +1,6 @@
 # DARWIN
 
-DARWIN is an owner-operated Binance Spot trading agent. The owner supplies a **Trading Mandate** and deterministic risk limits; DARWIN's custom `AgentRuntime` selects a pair and returns a typed `BUY`, `SELL`, or `HOLD` decision. The backend—not the model or frontend—authorizes every possible financial write.
+DARWIN is an owner-operated Binance Spot trading system with two execution paths. `AUTO_BOUNDED` uses DARWIN's custom `AgentRuntime` to select a pair and return a typed `BUY`, `SELL`, or `HOLD` decision. MCP-native `HUMAN_APPROVAL` uses an external MCP-compatible host for reasoning and proposal generation. In both paths, the backend—not the model, external host, or frontend—authorizes every possible financial write.
 
 ## Judge Quickstart — zero credentials
 
@@ -23,6 +23,8 @@ The checked-in root `docker-compose.yml` is deliberately the **JUDGE DEMO** prof
 - deterministic synthetic Binance-format fixtures replace external market/account/model providers;
 - no external LLM call or Binance connection occurs; and
 - `DEMO_MODE=true` blocks financial writes before an order, cancellation, transfer, or withdrawal transport can be reached.
+
+This root Compose runtime is not a live HUMAN_APPROVAL deployment manifest.
 
 The demo exposes three backend-computed scenarios:
 
@@ -68,16 +70,18 @@ Owner mutations require an owner session and CSRF validation. The public showcas
 
 ## Current architecture
 
-DARWIN uses a custom `AgentRuntime`; Pydantic is used for typed model-output validation, not as an agent framework.
+DARWIN has two architectural execution paths. The scheduled `AUTO_BOUNDED` path uses a custom `AgentRuntime`; Pydantic is used for typed model-output validation, not as an agent framework. The MCP-native `HUMAN_APPROVAL` path uses an external MCP-compatible host for reasoning and proposal generation, while DARWIN remains the authorization authority.
 
-1. The worker computes the **Effective Universe** from the **Configured Universe** ∩ **Allowed Symbols** ∩ currently valid Binance Spot/USDT symbols with required filters.
-2. It scans every effective candidate with bounded closed `15m` and `1h` OHLCV evidence, then `AgentRuntime.choose_pair()` selects one pair.
-3. The final model call receives only selected-pair evidence: current ticker, closed `15m`/`1h`/`4h` history, balances, open orders, recent activity, filters, Trading Mandate, policy, and budget.
+One mode-aware worker processes durable work for both paths. It schedules `AgentRuntime` only for `AUTO_BOUNDED`; `HUMAN_APPROVAL` does not use internal scheduled or REST run-once reasoning, and does not require DARWIN `OPENAI_API_KEY` for its reasoning path.
+
+1. In `AUTO_BOUNDED`, the worker computes the **Effective Universe** from the **Configured Universe** ∩ **Allowed Symbols** ∩ currently valid Binance Spot/USDT symbols with required filters.
+2. The AUTO_BOUNDED worker scans every effective candidate with bounded closed `15m` and `1h` OHLCV evidence, then `AgentRuntime.choose_pair()` selects one pair.
+3. The AUTO_BOUNDED final model call receives only selected-pair evidence: current ticker, closed `15m`/`1h`/`4h` history, balances, open orders, recent activity, filters, Trading Mandate, policy, and budget.
 4. `AgentRuntime.decide()` validates a typed `BUY`, `SELL`, or `HOLD` object with confidence, rationale, supporting factors, and risk factors.
-5. Deterministic backend policy evaluates symbols, per-trade notional, 24-hour BUY budget, active workflows, balances, Binance filters, evidence freshness, open-order conflict, and emergency stop.
+5. In both paths, deterministic backend policy evaluates symbols, per-trade notional, 24-hour BUY budget, active workflows, balances, Binance filters, evidence freshness, open-order conflict, and emergency stop.
 6. A permitted actionable decision either creates durable work for the selected mode or completes as a safe no-write outcome when the global write gate is closed.
 
-The OpenAI SDK supports direct OpenAI or an OpenAI-compatible endpoint through `OPENAI_BASE_URL`. A malformed or schema-invalid model response fails closed after one correction attempt.
+The `AUTO_BOUNDED` path uses the OpenAI SDK directly or through an OpenAI-compatible endpoint at `OPENAI_BASE_URL`. A malformed or schema-invalid model response fails closed after one correction attempt. The MCP-native `HUMAN_APPROVAL` path does not require DARWIN `OPENAI_API_KEY` for readiness.
 
 For the full contract, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -104,9 +108,36 @@ The bootstrap five are neither a dynamic ranking nor a five-pair runtime limit.
 | Mode | Authorization | Transport | Per-order human approval |
 | --- | --- | --- | --- |
 | `AUTO_BOUNDED` | `AUTO_POLICY` after deterministic policy and fresh revalidation | direct, backend-only **Binance Spot API** | no |
-| `HUMAN_APPROVAL` | durable Telegram or web approval, then fresh revalidation | Codex App Server + **Binance Agent OS** MCP | yes |
+| `HUMAN_APPROVAL` | external MCP proposal plus explicit owner approval through DARWIN MCP | DARWIN MCP control plane, then Codex App Server + **Binance Agent OS** MCP | yes |
 
-Both paths use the same policy, account-scoped execution lock, idempotency key, final write marker, reconciliation, and audit trail. Codex does not decide trades and does not override backend policy. `AUTO_BOUNDED` does not require Codex OAuth or Telegram approval.
+Both paths use the same policy, account-scoped execution lock, idempotency key, final write marker, reconciliation, and audit trail. `AUTO_BOUNDED` does not require Codex OAuth or Telegram approval.
+
+### MCP-native `HUMAN_APPROVAL` control plane
+
+**AI proposes. DARWIN authorizes. Binance executes.** An external MCP-compatible host—such as Codex, Claude Code, Cursor, or ChatGPT—owns reasoning and proposal generation. DARWIN remains the deterministic authority for the Trading Mandate, budget, universe, policy, durable state, financial-write gate, safety, and reconciliation.
+
+The implemented flow is:
+
+```text
+External MCP host reasoning
+  -> DARWIN MCP read projections
+  -> untrusted proposal validation
+  -> deterministic mandate / policy / budget / risk checks
+  -> darwin.submit_proposal
+  -> durable WAITING_FOR_APPROVAL intent
+  -> explicit owner darwin.approve_trade or darwin.reject_trade
+  -> TradeIntentApprovalService
+  -> durable approval/execution outbox
+  -> ApprovedExecution
+  -> Codex App Server
+  -> Binance Agent OS MCP
+  -> provider confirmation where applicable
+  -> Binance
+```
+
+The host may inspect authorized state, reason, propose, and present controls to the owner. It cannot provide trusted balances, Binance filters, policy results, final execution arguments, or unrestricted raw buy/sell/place-order access. Proposal generation and explicit owner approval remain separate events; model confidence or policy `PASS` never self-approves a trade.
+
+The private inbound `/mcp` endpoint uses `DARWIN_MCP_BEARER_TOKEN`. The deployed HUMAN_APPROVAL readiness contract does not require DARWIN `OPENAI_API_KEY`; it does require the MCP bearer token and the configuration needed for persisted provider authorization.
 
 ## Safety model
 
@@ -126,7 +157,10 @@ Both paths use the same policy, account-scoped execution lock, idempotency key, 
 | Unauthenticated Chromium shell routes `/`, `/agent`, `/budget`, `/activity`, and `/settings` | **VERIFIED**; protected APIs correctly returned `401` and no mutation was attempted |
 | Public-enabled `/showcase` Chromium rendering | **VERIFIED** |
 | Custom AgentRuntime, typed validation, dual transports, policy, persistence, reconciliation, and public projection | **IMPLEMENTED** |
+| MCP-native HUMAN_APPROVAL control plane, bearer denial, tools/list, mode-aware readiness, and proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
+| Authenticated Binance Agent OS/Codex read acceptance on Windows | **VERIFIED**: bearer auth, 17 DARWIN tools, deferred Spot discovery 0 → 48, `get_universe` `FRESH`, `get_portfolio` `CONNECTED`, and deterministic zero-USDT rejection with `insufficient available USDT balance` |
+| Funded HUMAN_APPROVAL proposal, provider write confirmation, or Binance order | **NOT VERIFIED**: the account was unfunded; no `WAITING_FOR_APPROVAL` attempt, approval, or order was made |
+| AUTO_BOUNDED transport regression | **VERIFIED**: uses `BinanceSpotApiClient` |
 | Funded `AUTO_BOUNDED` live order | **NOT VERIFIED** |
-| Authenticated `HUMAN_APPROVAL` Codex/Binance Agent OS acceptance | **PENDING / NOT VERIFIED** |
 
 See [docs/DEMO.md](docs/DEMO.md), [docs/LIVE.md](docs/LIVE.md), [docs/RUNBOOK.md](docs/RUNBOOK.md), and [docs/SUBMISSION.md](docs/SUBMISSION.md) for reproduction and reviewer detail.

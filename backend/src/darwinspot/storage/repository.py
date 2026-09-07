@@ -146,7 +146,7 @@ class Repository:
         return self.db.scalar(
             select(AgentRun)
             .where(
-                AgentRun.trigger_type.in_(("SCHEDULED", "RUN_ONCE")),
+                AgentRun.trigger_type.in_(("SCHEDULED", "RUN_ONCE", "MCP_PROPOSAL")),
                 AgentRun.completed_at.is_not(None),
             )
             .order_by(AgentRun.started_at.desc())
@@ -195,6 +195,11 @@ class Repository:
             select(TradeIntent).where(
                 (TradeIntent.binance_order_id == order_id) | (TradeIntent.id == order_id)
             )
+        )
+
+    def find_intent_by_idempotency_key(self, idempotency_key: str) -> TradeIntent | None:
+        return self.db.scalar(
+            select(TradeIntent).where(TradeIntent.idempotency_key == idempotency_key).limit(1)
         )
 
     def non_terminal_intents(self) -> list[TradeIntent]:
@@ -692,11 +697,30 @@ class Repository:
         operator_chat_id: str,
         ttl_seconds: int,
         signal_since: datetime | None = None,
+        idempotency_key: str | None = None,
     ) -> tuple[TradeIntent, TradeIntentApproval]:
         config = self.db.scalar(select(AgentConfig).with_for_update().limit(1))
         policy = self.current_policy()
         if config is None or policy is None:
             raise ValueError("agent policy is required before creating an intent")
+        if config.mode != ExecutionMode.HUMAN_APPROVAL:
+            raise ValueError("DARWIN is not in HUMAN_APPROVAL mode")
+        if config.emergency_stop:
+            raise SubmissionBlocked("emergency stop is active")
+        mandate = self.current_mandate()
+        expected_mandate = policy_evidence.get("mandate_version")
+        if expected_mandate is not None and (mandate is None or mandate.id != expected_mandate):
+            raise BudgetExceeded("proposal authorization is stale")
+        snapshot = policy_evidence.get("policy_snapshot")
+        if isinstance(snapshot, dict):
+            current_snapshot = {
+                "allowed_symbols": sorted(policy.allowed_symbols),
+                "configured_symbols": sorted(policy.configured_symbols),
+                "max_order_notional": str(policy.max_order_notional),
+                "max_open_actionable_intents": policy.max_open_actionable_intents,
+            }
+            if snapshot != current_snapshot:
+                raise BudgetExceeded("proposal policy changed during admission")
         quantity = Decimal(str(decision["quantity"]))
         price = Decimal(str(decision["price"])) if decision.get("price") is not None else None
         side = str(decision.get("side") or decision["action"])
@@ -714,7 +738,7 @@ class Repository:
         now = now_utc()
         intent = TradeIntent(
             id=new_idempotency_key(),
-            idempotency_key=new_idempotency_key(),
+            idempotency_key=idempotency_key or new_idempotency_key(),
             agent_run_id=run_id,
             pair=str(decision["pair"]),
             side=side,

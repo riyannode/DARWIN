@@ -17,19 +17,13 @@ from darwinspot.api.auth import (
     mutation_owner,
     require_recent_reauthentication,
 )
-from darwinspot.binance.client import (
-    AgentOSAuthInvalid,
-    AgentOSUnavailable,
-    ToolCatalog,
-)
+from darwinspot.binance.client import AgentOSAuthInvalid, AgentOSUnavailable
 from darwinspot.binance.codex_transport import CodexTransportError
 from darwinspot.binance.factory import build_binance_client
-from darwinspot.binance.mapper import map_spot_market_universe, map_symbol_filters
 from darwinspot.config import get_settings
 from darwinspot.domain import AgentState
 from darwinspot.execution.modes import ExecutionMode
 from darwinspot.execution.universe import validate_supported_symbols
-from darwinspot.observability import log_event
 from darwinspot.storage.database import get_db
 from darwinspot.storage.models import OwnerSession
 from darwinspot.storage.repository import Repository
@@ -113,58 +107,21 @@ def put_mandate(
 async def put_universe(
     request: UniverseInput, _: object = Depends(mutation_owner), db: Session = Depends(get_db)
 ) -> dict[str, object]:
-    repo = Repository(db)
-    config = repo.get_or_create_agent()
-    settings = get_settings()
-    connection = repo.current_connection()
-    existing_symbols = set(repo.supported_symbols())
-    additions = [symbol for symbol in request.supported_symbols if symbol not in existing_symbols]
-    client = None
     try:
-        if additions:
-            try:
-                client = build_binance_client(settings, connection, mode=config.mode)
-            except AgentOSUnavailable as exc:
-                raise HTTPException(
-                    status_code=503, detail="selected Binance transport is unavailable"
-                ) from exc
-            catalog = ToolCatalog(await client.discover_tools())
-            market_universe = map_spot_market_universe(
-                await client.call_tool(catalog.arguments("market_universe", {}))
-            )
-            live = {str(item["symbol"]): item for item in market_universe}
-            for symbol in additions:
-                if live.get(symbol) is None:
-                    raise HTTPException(
-                        status_code=422,
-                        detail=f"{symbol} is not a currently trading Binance Spot/USDT symbol",
-                    )
-                filters = map_symbol_filters(
-                    await client.call_tool(
-                        catalog.arguments("symbol_filters", {"symbol": symbol})
-                    )
-                )
-                if filters.symbol != symbol or filters.quote_asset != "USDT":
-                    raise HTTPException(
-                        status_code=422,
-                        detail=f"{symbol} does not expose valid Binance Spot/USDT filters",
-                    )
-        saved = repo.save_supported_symbols(request.supported_symbols)
-    except (AgentOSUnavailable, CodexTransportError) as exc:
+        from darwinspot.application.owner_controls import update_universe
+
+        return await update_universe(
+            db,
+            request.supported_symbols,
+            actor="WEB_OWNER",
+            settings=get_settings(),
+        )
+    except (AgentOSUnavailable, CodexTransportError, RuntimeError) as exc:
         raise HTTPException(
             status_code=503, detail="selected Binance transport is unavailable"
         ) from exc
-    finally:
-        transport = getattr(client, "transport", None)
-        if transport is not None:
-            await transport.close()
-    repo.record_audit_event(
-        trigger="SUPPORTED_SYMBOLS_CHANGED",
-        state="SUPPORTED_SYMBOLS_CHANGED",
-        model=settings.openai_model,
-        evidence={"supportedSymbols": list(saved)},
-    )
-    return {"supportedSymbols": list(saved)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.put("/mode")
@@ -174,15 +131,16 @@ def put_mode(
     repo = Repository(db)
     config = repo.get_or_create_agent()
     if request.mode == ExecutionMode.AUTO_BOUNDED and repo.current_mandate() is None:
-        raise HTTPException(
-            status_code=409, detail="configure a Trading Mandate before activation"
-        )
+        raise HTTPException(status_code=409, detail="configure a Trading Mandate before activation")
     if request.mode == ExecutionMode.AUTO_BOUNDED and repo.current_budget() is None:
         raise HTTPException(
             status_code=409, detail="set the rolling 24-hour budget before activation"
         )
     previous_mode = config.mode
     config.mode = request.mode
+    if request.mode == ExecutionMode.HUMAN_APPROVAL:
+        config.state = AgentState.STOPPED
+        config.next_run_at = None
     db.commit()
     repo.record_audit_event(
         trigger="EXECUTION_MODE_CHANGED",
@@ -199,6 +157,11 @@ def start_agent(
 ) -> dict[str, str]:
     repo = Repository(db)
     config = repo.get_or_create_agent()
+    if config.mode != ExecutionMode.AUTO_BOUNDED:
+        raise HTTPException(
+            status_code=409,
+            detail="scheduled AgentRuntime is only available in AUTO_BOUNDED mode",
+        )
     if config.emergency_stop:
         raise HTTPException(status_code=409, detail="emergency stop is active")
     if not get_settings().openai_api_key:
@@ -227,6 +190,11 @@ async def run_once(
     repo = Repository(db)
     settings = get_settings()
     config = repo.get_or_create_agent()
+    if config.mode != ExecutionMode.AUTO_BOUNDED:
+        raise HTTPException(
+            status_code=409,
+            detail="internal run-once reasoning is AUTO_BOUNDED-only",
+        )
     connection = repo.current_connection()
     if not settings.openai_api_key:
         raise HTTPException(status_code=503, detail="OPENAI_API_KEY is required for a real run")
@@ -269,44 +237,13 @@ async def emergency_stop(
     owner: OwnerSession = Depends(mutation_owner), db: Session = Depends(get_db)
 ) -> dict[str, object]:
     require_recent_reauthentication(owner)
-    repo = Repository(db)
-    settings = get_settings()
-    from darwinspot.execution.approved import account_execution_lock
-    from darwinspot.notifications.outbox import EMERGENCY_CANCEL_KIND, enqueue_unique
+    from darwinspot.application.owner_controls import emergency_stop as run_emergency_stop
 
-    with account_execution_lock(db, settings.binance_account_lock_key):
-        config = repo.get_or_create_agent()
-        config.emergency_stop = True
-        config.state = AgentState.EMERGENCY_STOP
-        config.next_run_at = None
-        targets: list[dict[str, str]] = []
-        for intent in repo.non_terminal_intents():
-            if intent.local_state not in {
-                "OPEN",
-                "PARTIALLY_FILLED",
-                "SUBMITTING",
-                "SUBMISSION_UNKNOWN",
-                "CANCEL_PENDING",
-            }:
-                continue
-            enqueue_unique(
-                db,
-                kind=EMERGENCY_CANCEL_KIND,
-                aggregate_id=intent.id,
-                payload={"intent_id": intent.id, "operator_action_id": owner.id},
-                dedupe_key=f"emergency-cancel:{config.id}:{intent.id}",
-            )
-            targets.append({"id": intent.id, "state": "CANCEL_QUEUED"})
-        db.commit()
-    log_event(
-        "EMERGENCY_STOP_ENABLED",
-        operator_action_id=owner.id,
-        target_count=len(targets),
-        target_ids=[item["id"] for item in targets],
+    return run_emergency_stop(
+        db,
+        actor=owner.id,
+        settings=get_settings(),
     )
-    if not targets:
-        return {"state": config.state, "cancellationState": "RECONCILED", "outcomes": []}
-    return {"state": config.state, "cancellationState": "QUEUED", "outcomes": targets}
 
 
 @router.post("/reactivate")

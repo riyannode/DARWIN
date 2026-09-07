@@ -34,6 +34,7 @@ from darwinspot.execution.approved import (
     account_execution_lock,
 )
 from darwinspot.execution.demo_guard import FinancialWriteBlocked
+from darwinspot.execution.modes import ExecutionMode
 from darwinspot.notifications.outbox import (
     CONFIRMATION_KIND,
     EMERGENCY_CANCEL_KIND,
@@ -60,16 +61,16 @@ _TRANSIENT_OPENAI_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 _MAX_BACKOFF_SECONDS = 60
 
 
-def _validate_worker_config(settings: Settings) -> None:
-    missing = [
-        name
-        for name, value in (
+def _validate_worker_config(settings: Settings, mode: str) -> None:
+    required = (
+        (
             ("OPENAI_API_KEY", settings.openai_api_key),
             ("OPENAI_MODEL", settings.openai_model),
-            ("CODEX_APP_SERVER_COMMAND", settings.codex_app_server_command),
         )
-        if not isinstance(value, str) or not value.strip()
-    ]
+        if mode == ExecutionMode.AUTO_BOUNDED
+        else ()
+    )
+    missing = [name for name, value in required if not isinstance(value, str) or not value.strip()]
     if missing:
         raise RuntimeError(f"worker configuration is missing: {', '.join(missing)}")
 
@@ -369,20 +370,33 @@ async def _process_outbox(settings: Settings) -> None:
 
 async def run_worker() -> None:
     settings = get_settings()
-    _validate_worker_config(settings)
-    if settings.openai_api_key is None:
-        raise RuntimeError("worker configuration validation did not establish OPENAI_API_KEY")
+    with SessionLocal() as db:
+        _validate_worker_config(settings, Repository(db).get_or_create_agent().mode)
     failure_streak = 0
     while True:
         sleep_seconds = settings.agent_cycle_seconds
         await _process_outbox(settings)
         with SessionLocal() as db:
             repo = Repository(db)
+            config = repo.get_or_create_agent()
+            _validate_worker_config(settings, config.mode)
             TradeIntentApprovalService(
                 db, default_ttl_seconds=settings.approval_ttl_seconds
             ).expire_due()
-            config = repo.claim_due_run(settings.agent_cycle_seconds)
+            if config.mode == ExecutionMode.HUMAN_APPROVAL:
+                if config.state == "RUNNING":
+                    config.state = "STOPPED"
+                    config.next_run_at = None
+                    db.commit()
+                config = None
+            elif config.mode == ExecutionMode.AUTO_BOUNDED:
+                config = repo.claim_due_run(settings.agent_cycle_seconds)
+            else:
+                raise RuntimeError(f"unsupported execution mode: {config.mode}")
             if config is not None:
+                api_key = settings.openai_api_key
+                if api_key is None:
+                    raise RuntimeError("AUTO_BOUNDED worker requires OPENAI_API_KEY")
                 run = repo.start_run("SCHEDULED", settings.openai_model)
                 connection = repo.current_connection()
                 client: Any = None
@@ -393,7 +407,7 @@ async def run_worker() -> None:
                             repo,
                             client,
                             AgentRuntime(
-                                settings.openai_api_key,
+                                api_key,
                                 settings.openai_model,
                                 settings.openai_base_url,
                             ),

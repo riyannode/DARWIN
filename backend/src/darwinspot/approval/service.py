@@ -17,7 +17,7 @@ from darwinspot.notifications.outbox import (
 from darwinspot.storage.models import TradeIntent, TradeIntentApproval
 
 ApprovalDecision = Literal["APPROVE", "REJECT"]
-ApprovalSource = Literal["TELEGRAM", "WEB"]
+ApprovalSource = Literal["TELEGRAM", "WEB", "MCP"]
 
 
 class ApprovalError(ValueError):

@@ -61,11 +61,13 @@ class DecisionCycle:
         ):
             raise RuntimeError("pending order reconciliation must complete before new proposals")
 
+        configured_symbols = repo.supported_symbols()
         catalog = ToolCatalog(await client.discover_tools())
         market_universe = map_spot_market_universe(
-            await client.call_tool(catalog.arguments("market_universe", {}))
+            await client.call_tool(
+                catalog.arguments("market_universe", {"symbols": configured_symbols})
+            )
         )
-        configured_symbols = repo.supported_symbols()
         universe = effective_symbols(configured_symbols, policy.allowed_symbols, market_universe)
         eligible_market = [
             item for item in market_universe if item["symbol"] in universe.eligible

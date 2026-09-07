@@ -157,8 +157,8 @@ class ToolCatalog:
             "ticker",
             "market data",
         ),
-        "market": ("ticker", "price", "market data", "kline"),
-        "balances": ("balance", "account"),
+        "market": ("symbol price ticker", "ticker", "price", "market data", "kline"),
+        "balances": ("account information", "balance", "account"),
         "open_orders": ("open order", "open_orders", "openorders"),
         "submit_order": (
             "new order",
@@ -167,16 +167,38 @@ class ToolCatalog:
             "place_order",
             "order.place",
             "submit order",
+            "send in a new order",
         ),
-        "cancel_order": ("cancel order", "cancel_order", "order.cancel"),
-        "order_status": ("query order", "query_order", "order.status", "order status"),
+        "cancel_order": (
+            "cancel an active order",
+            "cancel order",
+            "cancel_order",
+            "order.cancel",
+        ),
+        "order_status": (
+            "check an order's status",
+            "query order",
+            "query_order",
+            "order.status",
+            "order status",
+        ),
         "symbol_filters": (
             "exchange information",
             "exchangeinfo",
             "exchange_info",
             "symbol filter",
+            "relevant filters",
         ),
         "recent_activity": ("my trades", "mytrades", "trade history"),
+    }
+    _read_operations = {
+        "market_universe",
+        "market",
+        "balances",
+        "open_orders",
+        "order_status",
+        "symbol_filters",
+        "recent_activity",
     }
 
     def __init__(self, tools: Sequence[ToolDescriptor | str]) -> None:
@@ -189,8 +211,10 @@ class ToolCatalog:
 
     @classmethod
     def is_permitted(cls, name: str, description: str = "") -> bool:
-        lowered = f"{name} {description}".lower()
-        return not any(part in lowered for part in cls._forbidden)
+        lowered_name = name.lower()
+        return lowered_name.startswith("spot.") and not any(
+            part in lowered_name for part in cls._forbidden
+        )
 
     @property
     def permitted_names(self) -> tuple[str, ...]:
@@ -208,9 +232,13 @@ class ToolCatalog:
                 continue
             if operation == "market_universe" and "symbol" in self._required(tool):
                 continue
-            if operation == "symbol_filters" and "symbol" not in self._required(tool):
+            if operation == "symbol_filters" and "symbol" not in self._properties(tool):
                 continue
             text = f"{tool.name} {tool.description}".lower()
+            if operation in self._read_operations and "(trade)" in text:
+                continue
+            if operation in {"submit_order", "cancel_order"} and "(trade)" not in text:
+                continue
             if operation == "submit_order" and "test" in text:
                 continue
             if operation == "market" and "order" in text:
@@ -301,7 +329,7 @@ class ToolCatalog:
         tool = self.resolve(operation)
         arguments: dict[str, Any] = {}
         if operation == "market_universe":
-            pass
+            self._put(tool, arguments, "symbols", values.get("symbols"), required=False)
         elif operation in {"market", "symbol_filters", "open_orders"}:
             self._put(
                 tool,

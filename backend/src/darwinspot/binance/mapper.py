@@ -299,6 +299,16 @@ def map_symbol_filters(payload: Any, observed_at: datetime | None = None) -> Sym
     symbol = value.get("symbol")
     filters = value.get("filters")
     if not isinstance(symbol, str) or not isinstance(filters, list):
+        raw_symbols = value.get("symbols")
+        symbols = cast(list[Any], raw_symbols) if isinstance(raw_symbols, list) else []
+        if len(symbols) == 1 and isinstance(symbols[0], dict):
+            symbol_value = cast(dict[str, Any], symbols[0])
+            if "serverTime" in value:
+                symbol_value = {**symbol_value, "serverTime": value["serverTime"]}
+            value = symbol_value
+            symbol = value.get("symbol")
+            filters = value.get("filters")
+    if not isinstance(symbol, str) or not isinstance(filters, list):
         raise BinanceMappingError(
             "Agent OS exchange-info response did not match Binance Spot schema"
         )

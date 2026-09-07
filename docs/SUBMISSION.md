@@ -2,23 +2,77 @@
 
 ## Positioning
 
-DARWIN is an autonomous Binance Spot trading agent with a visible, deterministic authority boundary. An owner configures a high-level **Trading Mandate**, **Allowed Symbols**, **Max Per Trade**, **24h Trading Budget**, **Max Concurrent Trades**, a **Configured Universe**, and an execution mode. DARWIN decides what, when, and how to trade only within those backend-enforced limits.
+DARWIN is an owner-operated Binance Spot decision and execution runtime with two execution paths and a visible, deterministic authority boundary. `AUTO_BOUNDED` uses DARWIN's AgentRuntime for proposal generation; MCP-native `HUMAN_APPROVAL` uses an external MCP-compatible host for reasoning and proposal generation. The owner supplies a high-level **Trading Mandate**, deterministic limits, and an execution mode. DARWIN's backend authorizes every possible financial write.
 
 ## What is implemented
 
-- A custom DARWIN `AgentRuntime`, built on the OpenAI SDK, supports direct OpenAI or an OpenAI-compatible endpoint through `OPENAI_BASE_URL`.
+- The `AUTO_BOUNDED` path uses a custom DARWIN `AgentRuntime`, built on the OpenAI SDK, with direct OpenAI or an OpenAI-compatible endpoint through `OPENAI_BASE_URL`.
 - Pair selection and final `BUY`/`SELL`/`HOLD` decisions are validated as strict Pydantic models. The decision includes confidence, rationale, supporting factors, and risk factors.
 - A newly created Configured Universe bootstraps to `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`, and `XRPUSDT` and accepts up to 100 validated Spot/USDT symbols. A database upgraded from before `0004_dual_execution_and_universe` can retain the migration's four-symbol compatibility value (`BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`) until an owner updates it.
 - The Effective Universe is `Configured Universe ∩ Allowed Symbols ∩ live-valid Binance Spot/USDT symbols`.
-- The worker scans all effective candidates, selects one pair, records selected-pair evidence, and applies deterministic policy before any execution work.
-- `AUTO_BOUNDED` uses the direct, backend-only **Binance Spot API**. `HUMAN_APPROVAL` uses explicit Telegram or web approval and **Binance Agent OS** through Codex App Server + MCP.
-- The backend owns policy, budget, balances, filters, freshness, open-order conflict, emergency stop, idempotency, external-call uncertainty, reconciliation, and the financial-write gate. The model and Codex cannot override those controls.
+- The `AUTO_BOUNDED` worker scans all effective candidates, selects one pair, records selected-pair evidence, and applies deterministic policy before any execution work; the `HUMAN_APPROVAL` worker processes durable external proposals and execution work without internal model reasoning.
+- `AUTO_BOUNDED` uses the direct, backend-only **Binance Spot API**. `HUMAN_APPROVAL` is MCP-native: an external MCP-compatible host reasons and proposes through DARWIN's private MCP control plane, while DARWIN validates, authorizes, and persists the durable approval state.
+- The backend owns policy, budget, balances, filters, freshness, open-order conflict, emergency stop, idempotency, external-call uncertainty, reconciliation, and the financial-write gate. The external host/model and Codex cannot override those controls.
 
 ## Safety boundary
 
 DARWIN is Spot-only. It does not support futures, margin, leverage, options, transfers, or withdrawals. A `SELL` only sells a held Spot asset; it cannot open a short position.
 
 A financial write requires the configured mode's authorization plus fresh revalidation. Durable intent state, an idempotency key, a pre-call marker, and reconciliation protect against duplicate or ambiguous submission. `SUBMISSION_UNKNOWN` is reconciled before retry. Emergency stop blocks ordinary new work and routes any necessary cancellation through durable reconciliation.
+
+DARWIN independently enforces the Trading Mandate, Allowed Symbols, Configured Universe, Effective Universe, Max Per Trade, rolling 24-hour budget, Max Concurrent Trades, balances, Binance filters, evidence freshness, open-order conflicts, emergency stop, execution mode, financial-write enablement, durable intent, idempotency/replay protection, submission uncertainty, and reconciliation. Mode is rechecked at the locked durable admission boundary; stale mandate/policy, budget, emergency-stop, and invalid-mode admissions fail closed.
+
+## MCP-native HUMAN_APPROVAL
+
+**AI proposes. DARWIN authorizes. Binance executes.** The external MCP host may read authorized DARWIN projections, reason, validate an untrusted proposal, submit it with an idempotency key, and present owner controls. The implemented control sequence is:
+
+```text
+DARWIN MCP read tools
+  -> darwin.validate_proposal (dry-run; no intent or approval)
+  -> darwin.submit_proposal
+  -> durable WAITING_FOR_APPROVAL
+  -> explicit owner darwin.approve_trade / darwin.reject_trade
+  -> TradeIntentApprovalService
+  -> durable execution outbox
+  -> ApprovedExecution
+  -> Codex App Server -> Binance Agent OS MCP
+  -> provider confirmation where applicable -> Binance
+```
+
+The external host/model must not self-approve a proposal. `darwin.approve_trade` is intended only for explicit owner-directed approval. Proposal confidence and deterministic policy `PASS` never constitute approval. The host cannot provide trusted balances, filters, policy results, final Binance arguments, or unrestricted raw order tools. Open the private `/mcp` endpoint with `DARWIN_MCP_BEARER_TOKEN`; no external provider authentication is required to inspect or reproduce the repository's judge demo.
+
+### Implemented MCP control surface
+
+Read / observability:
+
+- `darwin.get_status`
+- `darwin.get_mandate`
+- `darwin.get_budget`
+- `darwin.get_universe`
+- `darwin.get_portfolio`
+- `darwin.get_latest_decision`
+- `darwin.get_activity`
+- `darwin.list_pending_trades`
+
+Proposal:
+
+- `darwin.validate_proposal`
+- `darwin.submit_proposal`
+
+Human control:
+
+- `darwin.approve_trade`
+- `darwin.reject_trade`
+- `darwin.resolve_execution_confirmation`
+
+Owner configuration / safety:
+
+- `darwin.update_mandate`
+- `darwin.update_budget`
+- `darwin.update_universe`
+- `darwin.emergency_stop`
+
+No `darwin.change_mode`, AUTONOMOUS start/stop/run_once controls, raw Binance trading tools, or direct financial-write tool is implemented in PR #10.
 
 ## Judge material
 
@@ -34,16 +88,38 @@ A financial write requires the configured mode's authorization plus fresh revali
 
 The YouTube video is the stable demo reference. The Cloudflare Tunnel is a currently available public read-only showcase and may expire; it is not the canonical reproducible demo path or a permanent production endpoint. Judges can always reproduce the judge demo locally.
 
-## Verification status
+## Judge evaluation
 
-| Claim | Status |
-| --- | --- |
-| Zero-credential Docker judge demo, all scenarios, and zero durable demo rows | **VERIFIED** in a fresh non-financial Compose run |
-| Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
-| Public-enabled `/showcase` Chromium rendering | **NOT VERIFIED** in this run |
-| AgentRuntime, Pydantic validation, direct Spot adapter, Binance Agent OS/Codex transport, policy, durable state, and reconciliation | **IMPLEMENTED** |
-| Funded `AUTO_BOUNDED` order | **NOT VERIFIED** |
-| Authenticated `HUMAN_APPROVAL` Binance Agent OS/Codex acceptance | **PENDING / NOT VERIFIED** |
-| Full owner-control-panel browser acceptance | **NOT VERIFIED** |
+The canonical evaluation path is:
 
-The judge demo is synthetic: it has no external LLM, Binance connection, or financial write. The PUBLIC LIVE SHOWCASE is real-model/real-market/read-only evidence; it is not a claim of funded live trading.
+```bash
+git clone https://github.com/riyannode/DARWIN.git
+cd DARWIN
+docker compose up --build
+```
+
+Then open `http://localhost:3000/demo`. The root Compose Judge Demo is synthetic, deterministic, credential-free, uses no external LLM or Binance authentication, and performs no financial writes. It is the easiest zero-credential evaluation path and is not a live HUMAN_APPROVAL deployment manifest.
+
+The implemented MCP-native control plane is available for technical inspection/testing through the private `/mcp` endpoint, but external provider authentication is not required to evaluate the submission's canonical Judge Demo.
+
+Positive current evidence:
+
+- zero-credential Docker Judge Demo and backend/frontend regression;
+- MCP server registration, `initialize`, and `tools/list` with 17 tools discovered;
+- missing and invalid bearer requests rejected with HTTP 401;
+- authenticated read projections and secret-redaction checks;
+- deterministic invalid proposal rejection with zero durable intent;
+- deterministic proposal-admission checks in the PR #10 feature-branch checks;
+- explicit approve/reject durable transitions through the existing state machine;
+- repeated approval idempotency and duplicate proposal idempotency;
+- conflicting idempotency fingerprint, stale mandate/policy, emergency-stop, and execution-mode admission rejection;
+- execution-mode recheck at the locked durable admission boundary;
+- restart/readback persistence;
+- unchanged AUTO_BOUNDED regression; and
+- frontend production build.
+
+### Real Windows acceptance boundary
+
+Verified on Windows: Codex connected to DARWIN MCP with bearer auth; 17 DARWIN tools were discovered; deferred Binance discovery expanded Spot tools from 0 to 48; authenticated reads returned `get_universe = FRESH` and `get_portfolio = CONNECTED`; and `validate_proposal` reached deterministic Binance balance policy.
+
+The account had zero USDT, so `insufficient available USDT balance` was the expected policy result, not an integration failure. A funded HUMAN_APPROVAL proposal reaching `WAITING_FOR_APPROVAL`, provider write confirmation, `darwin.approve_trade`, and a real Binance order were not attempted or verified. The AUTO_BOUNDED regression continued to use `BinanceSpotApiClient`.
