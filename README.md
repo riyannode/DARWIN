@@ -26,6 +26,15 @@ The checked-in root `docker-compose.yml` is deliberately the **JUDGE DEMO** prof
 
 This root Compose runtime is not a live HUMAN_APPROVAL deployment manifest.
 
+## Want to actually run DARWIN?
+
+The root Compose command above is the zero-credential **JUDGE DEMO**. For a provider-backed fork, use the [live installation guide](docs/LIVE.md):
+
+- **HUMAN_APPROVAL:** external MCP host reasoning, DARWIN bearer-authenticated `/mcp`, explicit owner approval, and Codex App Server → Binance Agent OS MCP transport.
+- **AUTO_BOUNDED:** DARWIN `AgentRuntime`, OpenAI-compatible model configuration, and the backend-only Binance Spot API adapter.
+
+Start with `FINANCIAL_WRITES_ENABLED=false`, verify the read path and owner controls, and do not treat configuration readiness as proof of funded execution.
+
 The demo exposes three backend-computed scenarios:
 
 | Scenario | Model decision | Deterministic result | System outcome |
