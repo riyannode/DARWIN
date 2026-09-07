@@ -174,7 +174,9 @@ The route reads persisted completed `SCHEDULED`/`RUN_ONCE` evidence. It neither 
 | Fresh Chromium `/demo` rendering and scenario selection | **VERIFIED** |
 | Fresh unauthenticated Chromium shells for `/`, `/agent`, `/budget`, `/activity`, and `/settings` | **VERIFIED**; protected APIs returned expected `401` responses and no mutation was attempted |
 | PUBLIC LIVE SHOWCASE Chromium rendering with its required live profile | **NOT VERIFIED** |
-| Authenticated Binance Agent OS/Codex provider acceptance | **PENDING / NOT VERIFIED** |
+| Authenticated Binance Agent OS/Codex read acceptance on Windows | **VERIFIED**: bearer auth, 17 DARWIN tools, deferred Spot discovery 0 → 48, `get_universe` `FRESH`, `get_portfolio` `CONNECTED`, and deterministic zero-USDT rejection |
+| Funded HUMAN_APPROVAL proposal, provider write confirmation, or Binance order | **NOT VERIFIED**: the account was unfunded; no `WAITING_FOR_APPROVAL` attempt, approval, or order was made |
+| AUTO_BOUNDED transport regression | **VERIFIED**: uses `BinanceSpotApiClient` |
 | Funded direct Binance Spot order | **NOT VERIFIED** |
 
 For runnable profiles and commands, see [LIVE.md](LIVE.md), [DEPLOYMENT.md](DEPLOYMENT.md), and [RUNBOOK.md](RUNBOOK.md).

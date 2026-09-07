@@ -160,8 +160,10 @@ Public `GET /api/showcase` is available only in the PUBLIC LIVE SHOWCASE profile
 
 - **VERIFIED:** fresh non-financial Docker JUDGE DEMO, all demo scenario APIs, zero durable demo rows, and Chromium `/demo` rendering plus scenario selection.
 - **VERIFIED:** MCP-native bearer denial, tools/list, HUMAN_APPROVAL readiness without DARWIN OpenAI key, proposal mode guards, zero durable AUTO_BOUNDED admission work, and normal HUMAN_APPROVAL durable admission checks on the PR #10 feature branch.
+- **VERIFIED on Windows:** Codex connected to DARWIN MCP with bearer auth; 17 DARWIN tools were discovered; deferred Binance discovery expanded Spot tools from 0 to 48; authenticated reads returned `get_universe = FRESH` and `get_portfolio = CONNECTED`; and deterministic balance policy rejected zero USDT with `insufficient available USDT balance`.
+- **VERIFIED:** AUTO_BOUNDED regression continues to use `BinanceSpotApiClient`.
 - **IMPLEMENTED:** AgentRuntime, policy, mode transports, durable approval/outbox, write markers, reconciliation, emergency stop, and safe-live closure.
-- **PENDING / NOT VERIFIED:** genuine authenticated Binance Agent OS/Codex provider acceptance.
+- **NOT VERIFIED:** funded HUMAN_APPROVAL proposal reaching `WAITING_FOR_APPROVAL`, provider write confirmation, `darwin.approve_trade`, or a Binance order; the account was unfunded and those actions were not attempted.
 - **NOT VERIFIED:** PUBLIC LIVE SHOWCASE Chromium under its required live profile; funded AUTO_BOUNDED live order; full authenticated owner-control-panel acceptance.
 
 Stop only processes started for a run. Keep `backend/.env` untracked and never place credentials, cookies, OAuth codes, account values, or private URLs in the repository.

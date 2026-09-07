@@ -68,7 +68,9 @@ The remaining roadmap is explicit: direct official MCP SDK Binance Agent OS tran
 | --- | --- |
 | Runtime architecture and safety controls | **IMPLEMENTED** |
 | Docker judge demo, all scenarios, and zero durable demo rows | **VERIFIED** in a fresh non-financial Compose run |
-| Authenticated Binance Agent OS/Codex acceptance | **PENDING / NOT VERIFIED** |
+| Authenticated Binance Agent OS/Codex read acceptance on Windows | **VERIFIED**: bearer auth, 17 DARWIN tools, deferred Spot discovery 0 → 48, `get_universe` `FRESH`, `get_portfolio` `CONNECTED`, and deterministic zero-USDT rejection |
+| Funded HUMAN_APPROVAL proposal, provider write confirmation, or Binance order | **NOT VERIFIED**: the account was unfunded; no `WAITING_FOR_APPROVAL` attempt, approval, or order was made |
+| AUTO_BOUNDED transport regression | **VERIFIED**: uses `BinanceSpotApiClient` |
 | Funded live execution | **NOT VERIFIED** |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for implementation detail and [RUNBOOK.md](RUNBOOK.md) for operator procedures.

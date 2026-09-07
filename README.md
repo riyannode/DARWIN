@@ -158,7 +158,9 @@ The private inbound `/mcp` endpoint uses `DARWIN_MCP_BEARER_TOKEN`. The deployed
 | Public-enabled `/showcase` Chromium rendering | **VERIFIED** |
 | Custom AgentRuntime, typed validation, dual transports, policy, persistence, reconciliation, and public projection | **IMPLEMENTED** |
 | MCP-native HUMAN_APPROVAL control plane, bearer denial, tools/list, mode-aware readiness, and proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
+| Authenticated Binance Agent OS/Codex read acceptance on Windows | **VERIFIED**: bearer auth, 17 DARWIN tools, deferred Spot discovery 0 → 48, `get_universe` `FRESH`, `get_portfolio` `CONNECTED`, and deterministic zero-USDT rejection with `insufficient available USDT balance` |
+| Funded HUMAN_APPROVAL proposal, provider write confirmation, or Binance order | **NOT VERIFIED**: the account was unfunded; no `WAITING_FOR_APPROVAL` attempt, approval, or order was made |
+| AUTO_BOUNDED transport regression | **VERIFIED**: uses `BinanceSpotApiClient` |
 | Funded `AUTO_BOUNDED` live order | **NOT VERIFIED** |
-| Authenticated external Binance Agent OS/Codex provider acceptance | **PENDING / NOT VERIFIED** |
 
 See [docs/DEMO.md](docs/DEMO.md), [docs/LIVE.md](docs/LIVE.md), [docs/RUNBOOK.md](docs/RUNBOOK.md), and [docs/SUBMISSION.md](docs/SUBMISSION.md) for reproduction and reviewer detail.

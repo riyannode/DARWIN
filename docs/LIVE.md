@@ -179,8 +179,10 @@ curl -i http://127.0.0.1:8000/docs
 | Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
 | Public-enabled `/showcase` Chromium rendering | **NOT VERIFIED** in this run |
 | MCP-native HUMAN_APPROVAL bearer/tools/list/readiness/proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
+| Authenticated Binance Agent OS/Codex read acceptance on Windows | **VERIFIED**: bearer auth, 17 DARWIN tools, deferred Spot discovery 0 → 48, `get_universe` `FRESH`, `get_portfolio` `CONNECTED`, and deterministic zero-USDT rejection |
+| Funded HUMAN_APPROVAL proposal, provider write confirmation, or Binance order | **NOT VERIFIED**: the account was unfunded; no `WAITING_FOR_APPROVAL` attempt, approval, or order was made |
+| AUTO_BOUNDED transport regression | **VERIFIED**: uses `BinanceSpotApiClient` |
 | Live configuration, worker, mode transport, and safety implementation | **IMPLEMENTED** |
 | Funded AUTO_BOUNDED execution | **NOT VERIFIED** |
-| Authenticated external Binance Agent OS/Codex provider acceptance | **PENDING / NOT VERIFIED** |
 
 Do not use documentation verification as a reason to submit a funded order, withdrawal, transfer, or live transport confirmation.

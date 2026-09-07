@@ -109,7 +109,7 @@ Positive current evidence:
 - missing and invalid bearer requests rejected with HTTP 401;
 - authenticated read projections and secret-redaction checks;
 - deterministic invalid proposal rejection with zero durable intent;
-- valid proposal admission into `WAITING_FOR_APPROVAL`;
+- deterministic proposal-admission checks in the PR #10 feature-branch checks;
 - explicit approve/reject durable transitions through the existing state machine;
 - repeated approval idempotency and duplicate proposal idempotency;
 - conflicting idempotency fingerprint, stale mandate/policy, emergency-stop, and execution-mode admission rejection;
@@ -117,3 +117,9 @@ Positive current evidence:
 - restart/readback persistence;
 - unchanged AUTO_BOUNDED regression; and
 - frontend production build.
+
+### Real Windows acceptance boundary
+
+Verified on Windows: Codex connected to DARWIN MCP with bearer auth; 17 DARWIN tools were discovered; deferred Binance discovery expanded Spot tools from 0 to 48; authenticated reads returned `get_universe = FRESH` and `get_portfolio = CONNECTED`; and `validate_proposal` reached deterministic Binance balance policy.
+
+The account had zero USDT, so `insufficient available USDT balance` was the expected policy result, not an integration failure. A funded HUMAN_APPROVAL proposal reaching `WAITING_FOR_APPROVAL`, provider write confirmation, `darwin.approve_trade`, and a real Binance order were not attempted or verified. The AUTO_BOUNDED regression continued to use `BinanceSpotApiClient`.
