@@ -26,6 +26,15 @@ The checked-in root `docker-compose.yml` is deliberately the **JUDGE DEMO** prof
 
 This root Compose runtime is not a live HUMAN_APPROVAL deployment manifest.
 
+## Want to actually run DARWIN?
+
+The root Compose command above is the zero-credential **JUDGE DEMO**. For a provider-backed fork, use the [live installation guide](docs/LIVE.md):
+
+- **HUMAN_APPROVAL:** external MCP host reasoning, DARWIN bearer-authenticated `/mcp`, explicit owner approval, and Codex App Server → Binance Agent OS MCP transport.
+- **AUTO_BOUNDED:** DARWIN `AgentRuntime`, OpenAI-compatible model configuration, and the backend-only Binance Spot API adapter.
+
+Start with `FINANCIAL_WRITES_ENABLED=false`, verify the read path and owner controls, and do not treat configuration readiness as proof of funded execution.
+
 The demo exposes three backend-computed scenarios:
 
 | Scenario | Model decision | Deterministic result | System outcome |
@@ -155,7 +164,7 @@ The private inbound `/mcp` endpoint uses `DARWIN_MCP_BEARER_TOKEN`. The deployed
 | Docker JUDGE DEMO, all three demo scenarios, and zero durable `agent_runs`/`trade_intents` rows | **VERIFIED** in a fresh non-financial Compose run |
 | Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
 | Unauthenticated Chromium shell routes `/`, `/agent`, `/budget`, `/activity`, and `/settings` | **VERIFIED**; protected APIs correctly returned `401` and no mutation was attempted |
-| Public-enabled `/showcase` Chromium rendering | **VERIFIED** |
+| Public-enabled `/showcase` Chromium rendering | **VERIFIED** at the temporary public-live URL; the inspected runtime was `STALE` / `LATEST_RUN_FAILED`, so fresh live evidence is not claimed |
 | Custom AgentRuntime, typed validation, dual transports, policy, persistence, reconciliation, and public projection | **IMPLEMENTED** |
 | MCP-native HUMAN_APPROVAL control plane, bearer denial, tools/list, mode-aware readiness, and proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
 | Authenticated Binance Agent OS/Codex read acceptance on Windows | **VERIFIED**: bearer auth, 17 DARWIN tools, deferred Spot discovery 0 → 48, `get_universe` `FRESH`, `get_portfolio` `CONNECTED`, and deterministic zero-USDT rejection with `insufficient available USDT balance` |

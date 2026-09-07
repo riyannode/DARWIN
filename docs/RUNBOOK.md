@@ -164,6 +164,7 @@ Public `GET /api/showcase` is available only in the PUBLIC LIVE SHOWCASE profile
 - **VERIFIED:** AUTO_BOUNDED regression continues to use `BinanceSpotApiClient`.
 - **IMPLEMENTED:** AgentRuntime, policy, mode transports, durable approval/outbox, write markers, reconciliation, emergency stop, and safe-live closure.
 - **NOT VERIFIED:** funded HUMAN_APPROVAL proposal reaching `WAITING_FOR_APPROVAL`, provider write confirmation, `darwin.approve_trade`, or a Binance order; the account was unfunded and those actions were not attempted.
-- **NOT VERIFIED:** PUBLIC LIVE SHOWCASE Chromium under its required live profile; funded AUTO_BOUNDED live order; full authenticated owner-control-panel acceptance.
+- **VERIFIED:** PUBLIC LIVE SHOWCASE Chromium rendered at the temporary public-live URL; the inspected runtime was `STALE` / `LATEST_RUN_FAILED`, so fresh live evidence is not claimed.
+- **NOT VERIFIED:** funded AUTO_BOUNDED live order; full authenticated owner-control-panel acceptance.
 
 Stop only processes started for a run. Keep `backend/.env` untracked and never place credentials, cookies, OAuth codes, account values, or private URLs in the repository.
