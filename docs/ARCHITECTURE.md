@@ -24,9 +24,13 @@ flowchart TD
     S --> P[AgentRuntime pair selection]
     P --> M[AgentRuntime BUY / SELL / HOLD]
     M --> G[Deterministic policy]
-    G --> W[AUTO_POLICY]
+    G --> F{Financial writes enabled?}
+    F -->|No| N[FINANCIAL_WRITES_DISABLED / no execution]
+    F -->|Yes| W[AUTO_POLICY]
     W --> Q[Fresh revalidation + account lock]
-    Q --> R[Direct Binance Spot API]
+    Q --> Z[Final financial-write gate]
+    Z -->|Blocked| K[No execution]
+    Z -->|Allowed| R[Direct Binance Spot API]
 ```
 
 ### `HUMAN_APPROVAL`
@@ -36,13 +40,16 @@ flowchart TD
     H[External MCP host] --> I[DARWIN MCP read projections]
     I --> P[External reasoning / proposal]
     P --> V[validate_proposal / submit_proposal]
-    V --> E[DARWIN fetches fresh authoritative Binance evidence]
-    E --> C[Codex App Server -> Binance Agent OS MCP]
+    V --> C[Codex App Server -> Binance Agent OS MCP: fetch authoritative evidence]
     C --> D[Deterministic mandate / policy / budget validation]
-    D --> W[WAITING_FOR_APPROVAL]
+    D --> F{Financial writes enabled?}
+    F -->|No| N[Reject / no actionable durable intent]
+    F -->|Yes| W[WAITING_FOR_APPROVAL]
     W --> O[Explicit owner approval]
     O --> Q[Fresh revalidation + account lock]
-    Q --> X[Codex App Server -> Binance Agent OS MCP]
+    Q --> Z[Final financial-write gate]
+    Z -->|Blocked| K[No execution]
+    Z -->|Allowed| X[Codex App Server -> Binance Agent OS MCP]
     X --> B[Binance]
 ```
 
@@ -179,7 +186,7 @@ The route reads persisted completed `SCHEDULED`/`RUN_ONCE` evidence. It neither 
 | Claim | Status |
 | --- | --- |
 | Runtime architecture, AgentRuntime, Pydantic validation, policy, transports, state machine, and public projection | **IMPLEMENTED** |
-| MCP-native HUMAN_APPROVAL control plane, bearer denial, tools/list, mode-aware readiness, and proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
+| MCP-native HUMAN_APPROVAL control plane, bearer denial, tools/list, mode-aware readiness, and proposal admission checks | **VERIFIED** during PR #10 acceptance |
 | Fresh non-financial Docker JUDGE DEMO: all three demo APIs and zero `agent_runs`/`trade_intents` rows | **VERIFIED** |
 | Fresh Chromium `/demo` rendering and scenario selection | **VERIFIED** |
 | Fresh unauthenticated Chromium shells for `/`, `/agent`, `/budget`, `/activity`, and `/settings` | **VERIFIED**; protected APIs returned expected `401` responses and no mutation was attempted |
