@@ -11,10 +11,10 @@ A live deployment needs managed processes for the API, the worker, the frontend,
 | Profile | `DEMO_MODE` | `FINANCIAL_WRITES_ENABLED` | `PUBLIC_SHOWCASE_ENABLED` | Behavior |
 | --- | --- | --- | --- | --- |
 | **JUDGE DEMO** | `true` | `false` | `false` | Synthetic `/demo`, zero credentials, no external LLM, no Binance connection, no financial writes. |
-| **PUBLIC LIVE SHOWCASE** | `false` | `false` | `true` | Real model and Binance evidence, scheduled worker, persisted read-only `/showcase`, no financial writes. |
+| **PUBLIC LIVE SHOWCASE** | `false` | `false` | `true` | Stored read-only `/showcase` evidence; fresh model and Binance evidence require an actual `AUTO_BOUNDED` scheduled or run-once operation; no financial writes. |
 | **REAL LIVE TRADING** | `false` | `true` | normally `false` | Operator-controlled Spot execution after the configured mode's authorization and all backend gates. |
 
-The showcase endpoint returns 404 unless it is public-enabled, demo mode is off, and financial writes are off. It is public read-only; all operator APIs and mutations remain owner-authenticated.
+The showcase endpoint returns 404 unless it is public-enabled, demo mode is off, and financial writes are off. It is public read-only; operator access is mode-specific: browser owner session/CSRF checks, DARWIN MCP bearer authentication, and Telegram webhook/operator identity checks.
 
 The financial-write setting is enforced at safe-live decision admission and again directly before external submission; it is not an authorization bypass.
 
@@ -23,7 +23,7 @@ The financial-write setting is enforced at safe-live decision admission and agai
 | Mode | Required transport | Financial credentials | Human authorization |
 | --- | --- | --- | --- |
 | `AUTO_BOUNDED` | direct Binance Spot API | `OPENAI_API_KEY` + `BINANCE_API_KEY` + `BINANCE_API_SECRET` | none per order |
-| `HUMAN_APPROVAL` | inbound DARWIN MCP for proposal/control, then Codex App Server + Binance Agent OS MCP for approved execution | `DARWIN_MCP_BEARER_TOKEN` + `TOKEN_ENCRYPTION_KEY` and genuine provider authorization; no DARWIN `OPENAI_API_KEY` required for readiness | explicit owner `darwin.approve_trade` / `darwin.reject_trade` through MCP |
+| `HUMAN_APPROVAL` | inbound DARWIN MCP for proposal/control, then Codex App Server + Binance Agent OS MCP for approved execution | `DARWIN_MCP_BEARER_TOKEN` + `TOKEN_ENCRYPTION_KEY` for DARWIN readiness; genuine provider authorization for provider-backed reads/execution; no DARWIN `OPENAI_API_KEY` required for readiness | explicit owner `darwin.approve_trade` / `darwin.reject_trade` through MCP |
 
 `AUTO_BOUNDED` does not use Codex OAuth or Telegram approval as its primary transport. `HUMAN_APPROVAL` does not use Binance API keys as its primary write transport. Both remain bounded by the same deterministic policy, fresh revalidation, idempotency, reconciliation, emergency stop, and financial-write gate.
 
@@ -47,7 +47,7 @@ Browser
        -> optional Telegram Bot API
 ```
 
-Terminate TLS and enforce ingress policy outside the repository. Keep the backend database URL, model key, owner password hash, Binance credentials, OAuth material, and Telegram values outside frontend configuration. The code supports PostgreSQL advisory locks for ordinary financial serialization; SQLite is only the demo default.
+Terminate TLS and enforce ingress policy outside the repository. Keep the backend database URL, model key, owner password hash, Binance credentials, OAuth material, and Telegram values outside frontend configuration. Settings default to local SQLite, but live guidance requires PostgreSQL for intended durable and cross-process operation. The code supports PostgreSQL advisory locks for ordinary financial serialization.
 
 ## Commands
 
@@ -82,14 +82,14 @@ curl -i http://127.0.0.1:8000/health/live
 curl -i http://127.0.0.1:8000/health/ready
 ```
 
-`/health/ready` is mode-aware. Non-demo readiness always requires owner credentials. `AUTO_BOUNDED` additionally requires the LLM configuration and direct Spot credentials. `HUMAN_APPROVAL` requires `DARWIN_MCP_BEARER_TOKEN`, `TOKEN_ENCRYPTION_KEY`, and genuine provider authorization; it does not require DARWIN `OPENAI_API_KEY`. Readiness is configuration readiness, not funded-order acceptance.
+`/health/ready` is mode-aware. Non-demo readiness always requires `OWNER_PASSWORD_HASH`. `AUTO_BOUNDED` additionally requires the LLM configuration and direct Spot credentials. `HUMAN_APPROVAL` additionally requires `TOKEN_ENCRYPTION_KEY` and `DARWIN_MCP_BEARER_TOKEN`; readiness does not verify live Codex/Binance OAuth or authenticated provider state, and it does not require DARWIN `OPENAI_API_KEY`. Readiness is configuration readiness, not funded-order acceptance.
 
 | Claim | Status |
 | --- | --- |
 | Docker JUDGE DEMO, all demo scenarios, and zero durable demo rows | **VERIFIED** in a fresh non-financial Compose run |
 | Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
 | Public-enabled `/showcase` Chromium rendering | **VERIFIED** |
-| MCP-native HUMAN_APPROVAL bearer/tools/list/readiness/proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
+| MCP-native HUMAN_APPROVAL bearer/tools/list/readiness/proposal admission checks | **VERIFIED** during PR #10 acceptance |
 | Authenticated Binance Agent OS/Codex read acceptance on Windows | **VERIFIED**: bearer auth, 17 DARWIN tools, deferred Spot discovery 0 → 48, `get_universe` `FRESH`, `get_portfolio` `CONNECTED`, and deterministic zero-USDT rejection |
 | Funded HUMAN_APPROVAL proposal, provider write confirmation, or Binance order | **NOT VERIFIED**: the account was unfunded; no `WAITING_FOR_APPROVAL` attempt, approval, or order was made |
 | AUTO_BOUNDED transport regression | **VERIFIED**: uses `BinanceSpotApiClient` |

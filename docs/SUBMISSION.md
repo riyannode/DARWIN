@@ -10,7 +10,7 @@ DARWIN is an owner-operated Binance Spot decision and execution runtime with two
 - Pair selection and final `BUY`/`SELL`/`HOLD` decisions are validated as strict Pydantic models. The decision includes confidence, rationale, supporting factors, and risk factors.
 - A newly created Configured Universe bootstraps to `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`, and `XRPUSDT` and accepts up to 100 validated Spot/USDT symbols. A database upgraded from before `0004_dual_execution_and_universe` can retain the migration's four-symbol compatibility value (`BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`) until an owner updates it.
 - The Effective Universe is `Configured Universe ∩ Allowed Symbols ∩ live-valid Binance Spot/USDT symbols`.
-- The `AUTO_BOUNDED` worker scans all effective candidates, selects one pair, records selected-pair evidence, and applies deterministic policy before any execution work; the `HUMAN_APPROVAL` worker processes durable external proposals and execution work without internal model reasoning.
+- The `AUTO_BOUNDED` worker scans all effective candidates, selects one pair, records selected-pair evidence, and applies deterministic policy before any execution work; `HUMAN_APPROVAL` proposal validation and admission happen synchronously through MCP, while the worker handles resulting durable approval expiry, execution, provider confirmation, outbox/notification, and reconciliation work.
 - `AUTO_BOUNDED` uses the direct, backend-only **Binance Spot API**. `HUMAN_APPROVAL` is MCP-native: an external MCP-compatible host reasons and proposes through DARWIN's private MCP control plane, while DARWIN validates, authorizes, and persists the durable approval state.
 - The backend owns policy, budget, balances, filters, freshness, open-order conflict, emergency stop, idempotency, external-call uncertainty, reconciliation, and the financial-write gate. The external host/model and Codex cannot override those controls.
 
@@ -28,9 +28,18 @@ DARWIN independently enforces the Trading Mandate, Allowed Symbols, Configured U
 
 ```text
 DARWIN MCP read tools
-  -> darwin.validate_proposal (dry-run; no intent or approval)
+  -> external BUY/SELL proposal
+  -> darwin.validate_proposal
+  -> fresh authoritative ticker, balances, open orders, recent activity, and filters
+     through Codex App Server -> Binance Agent OS MCP
+  -> deterministic mandate / policy / budget validation (dry-run; no durable work)
   -> darwin.submit_proposal
-  -> durable WAITING_FOR_APPROVAL
+  -> fresh authoritative ticker, balances, open orders, recent activity, and filters
+     through Codex App Server -> Binance Agent OS MCP again
+  -> deterministic mandate / policy / budget validation
+  -> pre-admission financial-write gate
+  -> if disabled: reject; no actionable durable intent
+  -> if enabled: durable WAITING_FOR_APPROVAL
   -> explicit owner darwin.approve_trade / darwin.reject_trade
   -> TradeIntentApprovalService
   -> durable execution outbox
@@ -38,6 +47,8 @@ DARWIN MCP read tools
   -> Codex App Server -> Binance Agent OS MCP
   -> provider confirmation where applicable -> Binance
 ```
+
+HUMAN_APPROVAL proposal admission happens synchronously through MCP. After admission, the worker handles durable approval expiry, execution and provider confirmation, outbox delivery, and reconciliation.
 
 The external host/model must not self-approve a proposal. `darwin.approve_trade` is intended only for explicit owner-directed approval. Proposal confidence and deterministic policy `PASS` never constitute approval. The host cannot provide trusted balances, filters, policy results, final Binance arguments, or unrestricted raw order tools. Open the private `/mcp` endpoint with `DARWIN_MCP_BEARER_TOKEN`; no external provider authentication is required to inspect or reproduce the repository's judge demo.
 
@@ -72,7 +83,7 @@ Owner configuration / safety:
 - `darwin.update_universe`
 - `darwin.emergency_stop`
 
-No `darwin.change_mode`, AUTONOMOUS start/stop/run_once controls, raw Binance trading tools, or direct financial-write tool is implemented in PR #10.
+No `darwin.change_mode` or AUTONOMOUS start/stop/run_once controls are exposed as MCP tools; the REST `AUTO_BOUNDED` start/stop/run-once controls already exist. Raw Binance trading tools and direct financial-write MCP tools are not exposed.
 
 ## Judge material
 
@@ -109,7 +120,7 @@ Positive current evidence:
 - missing and invalid bearer requests rejected with HTTP 401;
 - authenticated read projections and secret-redaction checks;
 - deterministic invalid proposal rejection with zero durable intent;
-- deterministic proposal-admission checks in the PR #10 feature-branch checks;
+- deterministic proposal-admission checks during PR #10 acceptance;
 - explicit approve/reject durable transitions through the existing state machine;
 - repeated approval idempotency and duplicate proposal idempotency;
 - conflicting idempotency fingerprint, stale mandate/policy, emergency-stop, and execution-mode admission rejection;

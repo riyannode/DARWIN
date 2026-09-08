@@ -31,7 +31,7 @@ Effective Universe = Configured Universe ∩ Allowed Symbols ∩ live-valid Bina
 
 ## Decision contract
 
-DARWIN's custom `AgentRuntime` uses the OpenAI SDK and optional OpenAI-compatible `OPENAI_BASE_URL`. Pydantic validates strict pair-selection and decision output; Pydantic is not the agent framework.
+`AUTO_BOUNDED`'s custom `AgentRuntime` uses the OpenAI SDK and optional OpenAI-compatible `OPENAI_BASE_URL`. Pydantic validates strict pair-selection and decision output; Pydantic is not the agent framework.
 
 Each `AUTO_BOUNDED` AgentRuntime cycle:
 
@@ -46,12 +46,12 @@ Candidate evidence supports selection and is retained for audit. Only selected-p
 
 ## Modes
 
-- **AUTO_BOUNDED:** DARWIN's `AgentRuntime` proposes a policy-passing intent; `AUTO_POLICY` authorizes it after fresh revalidation and the direct backend-only **Binance Spot API** executes it. It does not need per-order Telegram/web approval or Codex OAuth.
+- **AUTO_BOUNDED:** DARWIN's `AgentRuntime` produces a typed proposal/decision; the backend determines whether it passes policy. Only after deterministic admission and the pre-admission financial-write gate does DARWIN create durable `AUTO_POLICY` authorization. `ApprovedExecution` then performs fresh revalidation under an account-scoped lock and applies the final financial-write gate before the direct backend-only **Binance Spot API** executes it. It does not need per-order Telegram/web approval or Codex OAuth.
 - **HUMAN_APPROVAL:** an external MCP-compatible host is the reasoning engine and proposal generator. It reads authorized DARWIN state and submits an untrusted proposal through DARWIN's private MCP control plane. DARWIN independently evaluates mandate, universe, policy, budget, risk, freshness, and write-gate state; a passing proposal becomes durable `WAITING_FOR_APPROVAL` work only after server-side validation. An explicit owner `darwin.approve_trade` or `darwin.reject_trade` call then uses the existing approval service and outbox path before Codex App Server + **Binance Agent OS** MCP transport.
 
 **AI proposes. DARWIN authorizes. Binance executes.** The external host may reason, inspect authorized state, propose, and present controls to the owner. It must not self-approve a proposal. `darwin.approve_trade` is intended only after explicit owner direction, and proposal confidence or deterministic policy `PASS` never constitutes approval. The host cannot supply trusted balances or filters, inject policy results, supply final Binance arguments, or access unrestricted raw order tools. Both modes use the same policy, account-scoped execution lock, idempotency, external-call marker, reconciliation, and audit trail.
 
-The remaining roadmap is explicit: direct official MCP SDK Binance Agent OS transport, production OAuth/CIMD authorization, multi-host/multi-replica remote MCP hardening, `AUTO_BOUNDED` to `AUTONOMOUS` enum migration, and AUTONOMOUS MCP start/stop/run_once controls are not implemented in PR #10.
+The remaining roadmap is explicit: direct official MCP SDK Binance Agent OS transport, production OAuth/CIMD authorization, multi-host/multi-replica remote MCP hardening, `AUTO_BOUNDED` to `AUTONOMOUS` enum migration, and AUTONOMOUS MCP start/stop/run_once controls are not implemented in the current runtime.
 
 ## Safety and failure contract
 

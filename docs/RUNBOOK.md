@@ -7,7 +7,7 @@ This runbook describes the current operational contract. It does not authorize d
 | Goal | Profile | Result |
 | --- | --- | --- |
 | Judge walkthrough | JUDGE DEMO | Synthetic data, no external LLM, no Binance connection, no financial writes. Run `docker compose up --build`, then open `/demo`. |
-| Public evidence | PUBLIC LIVE SHOWCASE | Real model and Binance evidence, scheduled worker, read-only `/showcase`, financial writes closed. |
+| Public evidence | PUBLIC LIVE SHOWCASE | Stored read-only `/showcase` evidence; fresh model and Binance evidence require an actual `AUTO_BOUNDED` scheduled or run-once operation, with financial writes closed. |
 | Operator-controlled trade execution | REAL LIVE TRADING | Financial writes deliberately enabled, subject to all policy and mode gates. |
 
 See [LIVE.md](LIVE.md) for exact flags and configuration.
@@ -80,42 +80,53 @@ The worker is required for `AUTO_BOUNDED` scheduled cycles and durable outbox wo
 6. Select `AUTO_BOUNDED` for direct bounded Spot API execution without per-order approval, or `HUMAN_APPROVAL` for the MCP-native external-host proposal and explicit owner approval flow.
 7. Start scheduled `AUTO_BOUNDED` operation only after the displayed transport state and profile flags match the intended mode. `HUMAN_APPROVAL` uses the MCP control plane instead of internal scheduled reasoning.
 
-## 6.1 MCP-native HUMAN_APPROVAL operation
+## 6. MCP-native HUMAN_APPROVAL operation
 
 **AI proposes. DARWIN authorizes. Binance executes.** Configure a compatible external MCP host—such as Codex, Claude Code, Cursor, or ChatGPT—with the private `DARWIN_MCP_BEARER_TOKEN` for `/mcp`.
 
 The host may discover the implemented DARWIN tools, read `darwin.get_status`, `darwin.get_mandate`, `darwin.get_budget`, `darwin.get_universe`, and `darwin.get_portfolio`, reason externally, validate a proposal, submit an untrusted proposal, and present owner controls. The authoritative sequence is:
 
 ```text
-read state
+read DARWIN MCP state
+  -> external BUY/SELL proposal
   -> darwin.validate_proposal
+  -> fresh authoritative ticker, balances, open orders, recent activity, and filters
+     through Codex App Server -> Binance Agent OS MCP
+  -> deterministic mandate / policy / budget validation (dry-run; no durable work)
   -> darwin.submit_proposal
-  -> WAITING_FOR_APPROVAL
+  -> fresh authoritative ticker, balances, open orders, recent activity, and filters
+     through Codex App Server -> Binance Agent OS MCP again
+  -> deterministic mandate / policy / budget validation
+  -> pre-admission financial-write gate
+  -> if disabled: reject; no actionable durable intent
+  -> if enabled: WAITING_FOR_APPROVAL
   -> explicit owner darwin.approve_trade or darwin.reject_trade
   -> existing TradeIntentApprovalService
   -> durable execution outbox / ApprovedExecution
   -> Codex App Server -> Binance Agent OS MCP
 ```
 
-`darwin.validate_proposal` is dry-run only. `darwin.submit_proposal` requires an idempotency key and stops at durable `WAITING_FOR_APPROVAL`; it never places an order. The host/model must not self-approve a proposal. `darwin.approve_trade` is intended only after explicit owner direction, and proposal confidence or deterministic policy `PASS` never constitutes approval. The host cannot provide trusted balances or filters, inject policy results, or call raw Binance order tools. Provider confirmation remains separate and is never auto-answered by DARWIN.
+`darwin.validate_proposal` is dry-run only. `darwin.submit_proposal` requires an idempotency key and reaches durable `WAITING_FOR_APPROVAL` only after fresh server-side evidence, policy validation, and financial-write admission; when writes are disabled it rejects without an actionable durable intent. It never places an order. The host/model must not self-approve a proposal. `darwin.approve_trade` is intended only after explicit owner direction, and proposal confidence or deterministic policy `PASS` never constitutes approval. The host cannot provide trusted balances or filters, inject policy results, or call raw Binance order tools. Provider confirmation remains separate and is never auto-answered by DARWIN.
 
-## 6. Normal decision and execution path
+## 6.1 AUTO_BOUNDED decision and execution path
 
 ```text
-Effective Universe
-  -> candidate scan: closed 15m + 1h evidence for every candidate
-  -> AgentRuntime selects one pair
-  -> selected-pair ticker, balances, orders, activity, filters, closed 15m/1h/4h evidence
-  -> typed BUY / SELL / HOLD
+Configured Universe
+  -> Effective Universe
+  -> candidate scan: 10 closed 15m + 1h candles for every effective candidate
+  -> AgentRuntime pair selection
+  -> selected-pair ticker, balances, orders, activity, filters, and 48 closed 15m/1h/4h candles
+  -> AgentRuntime typed BUY / SELL / HOLD
   -> deterministic policy, budget, freshness, and emergency-stop checks
   -> financial-write gate
-  -> HUMAN_APPROVAL: external MCP host -> DARWIN validate/submit -> WAITING_FOR_APPROVAL
-     -> explicit owner approve/reject through DARWIN MCP -> Codex / Binance Agent OS MCP
-     AUTO_BOUNDED: AUTO_POLICY -> direct Binance Spot API
-  -> fresh revalidation, account lock, write marker, submission, reconciliation
+  -> if disabled: FINANCIAL_WRITES_DISABLED / no execution
+  -> if enabled: durable AUTO_POLICY authorization
+  -> ApprovedExecution fresh revalidation + account lock
+  -> final financial-write gate
+  -> direct Binance Spot API
 ```
 
-Candidate scans use 10 closed `15m` and `1h` candles per effective symbol. Final selected-pair evidence uses 48 closed candles for `15m`, `1h`, and `4h`. Candidate failures exclude only the failed symbol and are persisted in original-cycle evidence. No candidate set produces `NO_EFFECTIVE_SYMBOLS` with no financial work.
+Candidate scans and AgentRuntime pair selection are `AUTO_BOUNDED`-only. Candidate failures exclude only the failed symbol and are persisted in original-cycle evidence. No candidate set produces `NO_EFFECTIVE_SYMBOLS` with no financial work.
 
 Approval cannot change the symbol, side, quantity, price, or final Binance arguments. The approval TTL defaults to 90 seconds and is bounded to 30–180 seconds. Duplicate MCP submissions and approval decisions are idempotent; existing Telegram/web approval compatibility remains separate from the MCP-native proposal path.
 
@@ -159,7 +170,7 @@ Public `GET /api/showcase` is available only in the PUBLIC LIVE SHOWCASE profile
 ## 9. Verification boundary
 
 - **VERIFIED:** fresh non-financial Docker JUDGE DEMO, all demo scenario APIs, zero durable demo rows, and Chromium `/demo` rendering plus scenario selection.
-- **VERIFIED:** MCP-native bearer denial, tools/list, HUMAN_APPROVAL readiness without DARWIN OpenAI key, proposal mode guards, zero durable AUTO_BOUNDED admission work, and normal HUMAN_APPROVAL durable admission checks on the PR #10 feature branch.
+- **VERIFIED:** MCP-native bearer denial, tools/list, HUMAN_APPROVAL readiness without DARWIN OpenAI key, proposal mode guards, zero durable AUTO_BOUNDED admission work, and normal HUMAN_APPROVAL durable admission checks during PR #10 acceptance.
 - **VERIFIED on Windows:** Codex connected to DARWIN MCP with bearer auth; 17 DARWIN tools were discovered; deferred Binance discovery expanded Spot tools from 0 to 48; authenticated reads returned `get_universe = FRESH` and `get_portfolio = CONNECTED`; and deterministic balance policy rejected zero USDT with `insufficient available USDT balance`.
 - **VERIFIED:** AUTO_BOUNDED regression continues to use `BinanceSpotApiClient`.
 - **IMPLEMENTED:** AgentRuntime, policy, mode transports, durable approval/outbox, write markers, reconciliation, emergency stop, and safe-live closure.

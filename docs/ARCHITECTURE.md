@@ -2,16 +2,18 @@
 
 ## Authority boundary
 
-DARWIN is a custom decision runtime, not a policy-free model wrapper. Its `AgentRuntime` uses the OpenAI SDK and optionally `OPENAI_BASE_URL` for an OpenAI-compatible endpoint. It makes two typed model calls:
+DARWIN is a custom decision runtime, not a policy-free model wrapper. In `AUTO_BOUNDED` only, its `AgentRuntime` uses the OpenAI SDK and optionally `OPENAI_BASE_URL` for an OpenAI-compatible endpoint. It makes two typed model calls:
 
 1. `choose_pair()` returns one strict Pydantic `PairSelection`.
 2. `decide()` returns one strict Pydantic `AgentDecision`: `BUY`, `SELL`, or `HOLD`, with pair/order details, confidence, rationale, supporting factors, and risk factors.
 
 Invalid JSON, extra fields, or invalid Pydantic output gets one schema-correction attempt; unresolved output fails closed. Pydantic validates model output—it is not an agent framework.
 
-The model decides a proposed trade. The deterministic backend owns the Trading Mandate, Allowed Symbols, Max Per Trade, 24h Trading Budget, Max Concurrent Trades, Configured Universe, balances, filters, freshness, open-order conflict, emergency stop, financial-write gate, and durable execution state.
+In `AUTO_BOUNDED`, the model decides a proposed trade. `HUMAN_APPROVAL` uses no internal DARWIN `AgentRuntime` or OpenAI reasoning; the external MCP host supplies the reasoning and proposal. In both modes, the deterministic backend owns the Trading Mandate, Allowed Symbols, Max Per Trade, 24h Trading Budget, Max Concurrent Trades, Configured Universe, balances, filters, freshness, open-order conflict, emergency stop, financial-write gate, and durable execution state.
 
 ## Decision flow
+
+### `AUTO_BOUNDED`
 
 ```mermaid
 flowchart TD
@@ -20,23 +22,38 @@ flowchart TD
     B[Live Binance Spot/USDT metadata and filters] --> E
     E --> S[Candidate scan: closed 15m + 1h OHLCV]
     S --> P[AgentRuntime pair selection]
-    P --> D[Selected-pair evidence]
-    D --> M[AgentRuntime BUY / SELL / HOLD]
-    M --> G[Decision-admission policy and budget]
-    G --> W{Financial writes enabled?}
-    W -->|No| N[FINANCIAL_WRITES_DISABLED]
-    W -->|Yes| X{Mode-specific authorization claim}
-    X -->|AUTO_BOUNDED| AA[AUTO_POLICY]
-    X -->|HUMAN_APPROVAL| HA[External MCP proposal + owner approval]
-    AA --> Q[Account lock + fresh evidence + current policy/budget revalidation]
-    HA --> Q
-    Q --> F{Final financial-write and applicable confirmation gates}
-    F -->|Blocked| K[Durable no-write state]
-    F -->|Allowed| T{External write transport}
-    T -->|AUTO_BOUNDED| R[Binance Spot API order write]
-    T -->|HUMAN_APPROVAL| H[Codex + Binance Agent OS MCP order write]
-    R --> J[Reconciliation + durable audit state]
-    H --> J
+    P --> M[AgentRuntime BUY / SELL / HOLD]
+    M --> G[Deterministic policy]
+    G --> F{Financial writes enabled?}
+    F -->|No| N[FINANCIAL_WRITES_DISABLED / no execution]
+    F -->|Yes| W[AUTO_POLICY]
+    W --> Q[Fresh revalidation + account lock]
+    Q --> Z[Final financial-write gate]
+    Z -->|Blocked| K[No execution]
+    Z -->|Allowed| R[Direct Binance Spot API]
+```
+
+### `HUMAN_APPROVAL`
+
+```mermaid
+flowchart TD
+    H[External MCP host] --> I[DARWIN MCP read projections]
+    I --> P[External reasoning / proposal]
+    P --> V[darwin.validate_proposal]
+    V --> C1[Fresh authoritative Binance evidence via Codex App Server -> Binance Agent OS MCP]
+    C1 --> D1[Deterministic mandate / policy / budget validation: dry-run]
+    D1 --> S[darwin.submit_proposal]
+    S --> C2[Fresh authoritative Binance evidence via Codex App Server -> Binance Agent OS MCP again]
+    C2 --> D2[Deterministic mandate / policy / budget validation]
+    D2 --> F{Pre-admission financial-write gate}
+    F -->|No| N[Reject / no actionable durable intent]
+    F -->|Yes| W[WAITING_FOR_APPROVAL]
+    W --> O[Explicit owner approval]
+    O --> Q[Fresh revalidation + account lock]
+    Q --> Z[Final financial-write gate]
+    Z -->|Blocked| K[No execution]
+    Z -->|Allowed| X[Codex App Server -> Binance Agent OS MCP]
+    X --> B[Binance]
 ```
 
 ### Universe and evidence
@@ -47,11 +64,11 @@ A newly created Configured Universe defaults to `BTCUSDT`, `ETHUSDT`, `BNBUSDT`,
 Effective Universe = Configured Universe ∩ Allowed Symbols ∩ live-valid Binance Spot/USDT symbols
 ```
 
-A cycle uses live exchange metadata and required filters to derive that intersection. It fetches 10 closed candles for `15m` and `1h` for every effective candidate with bounded concurrency of eight. A failed candidate is excluded, recorded as a sanitized failure in that run's `pair_selection` evidence, and does not create a child run. If no candidate remains, the cycle completes as `NO_EFFECTIVE_SYMBOLS`.
+An `AUTO_BOUNDED` cycle uses live exchange metadata and required filters to derive that intersection. It fetches 10 closed candles for `15m` and `1h` for every effective candidate with bounded concurrency of eight. A failed candidate is excluded, recorded as a sanitized failure in that run's `pair_selection` evidence, and does not create a child run. If no candidate remains, the cycle completes as `NO_EFFECTIVE_SYMBOLS`.
 
-Configured-universe validation accepts up to 100 symbols. Candidate scanning processes the entire Effective Universe and is never silently truncated. A sufficiently large Effective Universe can exceed the worker's current 60-second cycle timeout; that cycle fails closed rather than creating a partial decision or silently reducing the candidate set.
+Configured-universe validation accepts up to 100 symbols. `AUTO_BOUNDED` candidate scanning processes the entire Effective Universe and is never silently truncated. A sufficiently large Effective Universe can exceed the worker's current 60-second cycle timeout; that cycle fails closed rather than creating a partial decision or silently reducing the candidate set.
 
-After pair selection, the final decision receives selected-pair-only current ticker, balances, open orders, recent activity, filters, Trading Mandate, policy/budget snapshots, and 48 closed candles each for `15m`, `1h`, and `4h`. Candidate history remains audit evidence and is not forwarded to the final model call.
+In `AUTO_BOUNDED`, after pair selection, the final decision receives selected-pair-only current ticker, balances, open orders, recent activity, filters, Trading Mandate, policy/budget snapshots, and 48 closed candles each for `15m`, `1h`, and `4h`. Candidate history remains audit evidence and is not forwarded to the final model call.
 
 ### Deterministic policy
 
@@ -66,14 +83,14 @@ A `BUY` or `SELL` must pass all applicable checks before it can create an action
 - no conflicting open order; and
 - emergency stop off.
 
-A `HOLD` is a model decision. `SKIPPED` is a system outcome. Policy rejection, stale evidence, an invalid selected pair, a suppressed repeat signal, no Effective Universe, or a closed financial-write gate never becomes an exchange order.
+In `AUTO_BOUNDED`, a `HOLD` is a model decision. `SKIPPED` is a system outcome. Policy rejection, stale evidence, an invalid selected pair, a suppressed repeat signal, no Effective Universe, or a closed financial-write gate never becomes an exchange order.
 
 ## Execution modes
 
 | Mode | Authorization | Evidence and transport | Approval semantics |
 | --- | --- | --- | --- |
 | `AUTO_BOUNDED` | `AUTO_POLICY` after policy admission | The direct backend-only **Binance Spot API** supplies exchange metadata, ticker, account, open orders, recent trades, filters, order submit/query, and emergency cancel. | No per-order human approval, Codex OAuth, or Telegram approval. |
-| `HUMAN_APPROVAL` | external MCP proposal plus explicit owner approval through DARWIN MCP | The inbound DARWIN MCP control plane admits a durable approval intent; approved execution uses Codex App Server + **Binance Agent OS** MCP. | Proposal and owner approval are separate events. The external host must not self-approve a proposal; `darwin.approve_trade` is intended only after explicit owner direction. |
+| `HUMAN_APPROVAL` | external MCP proposal plus explicit owner approval; MCP is the primary control plane | The inbound DARWIN MCP control plane admits a durable approval intent; approved execution uses Codex App Server + **Binance Agent OS** MCP. | The shared approval state machine supports MCP, Web, and Telegram authorization sources. Proposal and owner approval are separate events. The external host must not self-approve a proposal; `darwin.approve_trade` is intended only after explicit owner direction. |
 
 Both modes use a fresh revalidation, account-scoped lock, current policy/budget, idempotency key, write request hash, external-call marker, durable outbox, and reconciliation. `HUMAN_APPROVAL` can stop at a further observed Codex/Binance confirmation; DARWIN never auto-answers it. `CODEX_WRITE_CONFIRMATION_VERIFIED=false` blocks HUMAN_APPROVAL financial submission pending manual provider-contract verification.
 
@@ -83,12 +100,22 @@ The single worker processes durable outbox, approval-expiry, confirmation, notif
 
 **AI proposes. DARWIN authorizes. Binance executes.** A compatible external MCP host—such as Codex, Claude Code, Cursor, or ChatGPT—owns reasoning and proposal generation. DARWIN owns the Trading Mandate, budget, universe, deterministic policy, durable state, financial-write gate, safety, and reconciliation.
 
+`HUMAN_APPROVAL` does not run DARWIN candidate scanning or internal `AgentRuntime` reasoning. The external host supplies the `BUY`/`SELL` proposal; DARWIN validates its symbol against the Configured, Allowed, and Effective Universe and fetches fresh ticker, balance, open-order, recent-activity, and filter evidence server-side.
+
 ```text
 External host reasoning
   -> DARWIN MCP read projections
-  -> darwin.validate_proposal (dry-run; no durable work)
-  -> darwin.submit_proposal (fresh server-side validation)
-  -> WAITING_FOR_APPROVAL TradeIntent + explicit approval record
+  -> darwin.validate_proposal
+  -> DARWIN fetches fresh authoritative ticker, balances, open orders,
+     recent activity, and filters through Codex App Server -> Binance Agent OS MCP
+  -> deterministic mandate / policy / budget validation (dry-run; no durable work)
+  -> darwin.submit_proposal
+  -> DARWIN fetches that authoritative Binance evidence again through
+     Codex App Server -> Binance Agent OS MCP
+  -> deterministic mandate / policy / budget validation
+  -> pre-admission financial-write gate
+  -> if disabled: reject; no actionable durable intent
+  -> if enabled: WAITING_FOR_APPROVAL TradeIntent + explicit approval record
   -> darwin.approve_trade or darwin.reject_trade
   -> existing TradeIntentApprovalService
   -> durable execution outbox / ApprovedExecution
@@ -100,7 +127,7 @@ The MCP host may inspect authorized state, reason, propose, and present controls
 
 ### Current implementation and future boundary
 
-Implemented in PR #10:
+Current implementation:
 
 - inbound private Streamable HTTP MCP at `/mcp`;
 - bearer-protected MCP access and bounded request handling;
@@ -119,7 +146,7 @@ Still future/planned:
 - `AUTO_BOUNDED` to `AUTONOMOUS` runtime enum migration; and
 - AUTONOMOUS MCP start/stop/run_once/control additions.
 
-These future items are not current PR #10 implementation claims.
+These future items are not implemented in the current runtime.
 
 ## Financial-write safety
 
@@ -169,7 +196,7 @@ The route reads persisted completed `SCHEDULED`/`RUN_ONCE` evidence. It neither 
 | Claim | Status |
 | --- | --- |
 | Runtime architecture, AgentRuntime, Pydantic validation, policy, transports, state machine, and public projection | **IMPLEMENTED** |
-| MCP-native HUMAN_APPROVAL control plane, bearer denial, tools/list, mode-aware readiness, and proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
+| MCP-native HUMAN_APPROVAL control plane, bearer denial, tools/list, mode-aware readiness, and proposal admission checks | **VERIFIED** during PR #10 acceptance |
 | Fresh non-financial Docker JUDGE DEMO: all three demo APIs and zero `agent_runs`/`trade_intents` rows | **VERIFIED** |
 | Fresh Chromium `/demo` rendering and scenario selection | **VERIFIED** |
 | Fresh unauthenticated Chromium shells for `/`, `/agent`, `/budget`, `/activity`, and `/settings` | **VERIFIED**; protected APIs returned expected `401` responses and no mutation was attempted |

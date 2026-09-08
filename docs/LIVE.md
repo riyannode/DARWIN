@@ -44,7 +44,7 @@ uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_
 uv run python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Use the three outputs for `OWNER_PASSWORD_HASH`, `TOKEN_ENCRYPTION_KEY`, and `DARWIN_MCP_BEARER_TOKEN`. The same commands work in PowerShell after `cd backend`; `getpass` does not echo the owner password.
+Use the three outputs for `OWNER_PASSWORD_HASH`, `TOKEN_ENCRYPTION_KEY`, and `DARWIN_MCP_BEARER_TOKEN`. The owner plaintext password is not echoed; generated bearer and encryption secrets are intentionally copied into `backend/.env`, which remains untracked. The same commands work in PowerShell after `cd backend`.
 
 For a local HUMAN_APPROVAL deployment, set these values in `backend/.env`:
 
@@ -86,7 +86,7 @@ FINANCIAL_WRITES_ENABLED=false
 PUBLIC_SHOWCASE_ENABLED=true
 ```
 
-The worker creates real model/market decision evidence. Public `/showcase` projects stored evidence without private balances. A policy-passing BUY/SELL ends as `FINANCIAL_WRITES_DISABLED` before an intent, approval, or financial transport call. It does not create a Binance order.
+An actual `AUTO_BOUNDED` scheduled or run-once operation creates real model/market decision evidence. Public `/showcase` only projects stored completed `SCHEDULED`/`RUN_ONCE` evidence without private balances; the profile flags alone do not create fresh evidence. A policy-passing BUY/SELL ends as `FINANCIAL_WRITES_DISABLED` before an intent, approval, or financial transport call. It does not create a Binance order.
 
 ### REAL LIVE TRADING
 
@@ -100,7 +100,7 @@ This profile makes possible financial writes only after deterministic authorizat
 
 ## Common live configuration
 
-Set these values in `backend/.env` for a ready live API:
+Set these base values in `backend/.env`; add the mode-specific settings below before `/health/ready` can pass:
 
 ```dotenv
 DEMO_MODE=false
@@ -110,6 +110,8 @@ DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DATABASE
 OWNER_PASSWORD_HASH=<Argon2id hash>
 FRONTEND_ORIGIN=https://your-real-frontend.example
 ```
+
+This common block is base configuration only. `/health/ready` also applies the mode-specific requirements below; readiness does not by itself prove live provider authentication or funded operation.
 
 `OPENAI_BASE_URL` is optional for `AUTO_BOUNDED`. Omit it for direct OpenAI, or set an absolute HTTP(S) OpenAI-compatible endpoint without embedded credentials, query, or fragment. The external MCP host supplies reasoning for the MCP-native `HUMAN_APPROVAL` path; DARWIN does not require `OPENAI_API_KEY` for that mode's readiness.
 
@@ -133,7 +135,7 @@ A fresh database defaults to `HUMAN_APPROVAL`. After startup, sign in to the own
 
 ### HUMAN_APPROVAL configuration
 
-`HUMAN_APPROVAL` is MCP-native: an external MCP-compatible host reasons and proposes through DARWIN's private `/mcp` control plane. DARWIN validates the untrusted proposal, persists `WAITING_FOR_APPROVAL`, and keeps explicit owner approval separate from model reasoning.
+`HUMAN_APPROVAL` is MCP-native: an external MCP-compatible host reasons and proposes through DARWIN's private `/mcp` control plane. DARWIN validates the untrusted proposal, and persists `WAITING_FOR_APPROVAL` only after fresh server-side policy and financial-write admission pass. Explicit owner approval remains separate from model reasoning.
 
 ```dotenv
 BINANCE_AGENT_OS_MCP_URL=https://agent.binance.com/mcp/agentic
@@ -141,9 +143,11 @@ BINANCE_AGENT_OS_TRANSPORT=codex
 CODEX_APP_SERVER_COMMAND="codex app-server --stdio"
 CODEX_APP_SERVER_VERSION=0.153.0
 CODEX_WRITE_CONFIRMATION_VERIFIED=false
-TOKEN_ENCRYPTION_KEY=<Fernet key for persisted Agent OS/OAuth material>
+TOKEN_ENCRYPTION_KEY=<Fernet key for DARWIN's retained encrypted OAuth storage path>
 DARWIN_MCP_BEARER_TOKEN=<private bearer token for the inbound /mcp control plane>
 ```
+
+The current Codex transport uses Codex-managed Binance authorization. `TOKEN_ENCRYPTION_KEY` belongs to DARWIN's separate retained encrypted OAuth storage path and remains a mode-aware readiness requirement.
 
 Use a compatible MCP host such as Codex, Claude Code, Cursor, or ChatGPT with the configured bearer token. The host may read authorized projections, reason, propose, and present controls; it cannot provide trusted balances, filters, policy results, final Binance arguments, or unrestricted raw order tools. `darwin.approve_trade` and `darwin.reject_trade` are explicit owner actions through the existing approval service. Keep `CODEX_WRITE_CONFIRMATION_VERIFIED=false` until an operator has observed the real write confirmation contract. A successful setting does not prove the operator is authenticated.
 
@@ -155,7 +159,7 @@ SIGNAL_COOLDOWN_SECONDS=300
 APPROVAL_TTL_SECONDS=90
 ```
 
-The Codex command above is used as a transport process after HUMAN_APPROVAL, not as the reasoning engine. `APPROVAL_TTL_SECONDS` is bounded to 30–180 seconds.
+The Codex command above is used as the outbound transport for HUMAN_APPROVAL, not as the reasoning engine. `APPROVAL_TTL_SECONDS` is bounded to 30–180 seconds.
 
 ### Optional Telegram
 
@@ -168,7 +172,7 @@ TELEGRAM_OPERATOR_USER_ID=<exact operator user id>
 TELEGRAM_WEBHOOK_SECRET=<webhook secret>
 ```
 
-Telegram can deliver HUMAN_APPROVAL proposals and notifications. The same approval state machine is available via authenticated web approval. Telegram is never per-order authorization for AUTO_BOUNDED.
+Telegram support remains a separate shared approval and notification path, and the same approval state machine is available via authenticated web approval. Neither path is part of the verified MCP-native external-proposal acceptance; MCP-created approvals use `MCP_OWNER` / `MCP_CONTROL_PANEL` identity values. Telegram is never per-order authorization for AUTO_BOUNDED.
 
 ## Migrate and run
 
@@ -232,7 +236,7 @@ The local DARWIN MCP endpoint is:
 http://127.0.0.1:8000/mcp
 ```
 
-Send `Authorization: Bearer <DARWIN_MCP_BEARER_TOKEN>` on every request. Current PR #10 acceptance found 17 DARWIN tools through `tools/list`. The inbound reasoning host and the outbound provider transport are separate: Codex, Claude Code, Cursor, or ChatGPT may reason through DARWIN's `/mcp`, while the configured outbound Binance Agent OS transport remains Codex App Server.
+Send `Authorization: Bearer <DARWIN_MCP_BEARER_TOKEN>` on every request. The verified Windows acceptance found 17 DARWIN tools through `tools/list`. The inbound reasoning host and the outbound provider transport are separate: Codex, Claude Code, Cursor, or ChatGPT may reason through DARWIN's `/mcp`, while the configured outbound Binance Agent OS transport remains Codex App Server.
 
 ### Codex
 
@@ -320,7 +324,7 @@ curl -i http://127.0.0.1:8000/docs
 
 In PowerShell, use `curl.exe` if `curl` resolves to the PowerShell web-request alias.
 
-`/health/ready` is mode-aware in live mode. It requires the owner hash in every non-demo profile. `AUTO_BOUNDED` additionally requires `OPENAI_API_KEY`, `OPENAI_MODEL`, and direct Binance Spot credentials. `HUMAN_APPROVAL` does not require DARWIN `OPENAI_API_KEY`, but it requires `TOKEN_ENCRYPTION_KEY` and `DARWIN_MCP_BEARER_TOKEN` for the MCP-native control plane and persisted provider authorization. Readiness is configuration readiness, not funded-order acceptance.
+`/health/ready` is mode-aware in live mode. It requires `OWNER_PASSWORD_HASH` in every non-demo profile. `AUTO_BOUNDED` additionally requires `OPENAI_API_KEY`, `OPENAI_MODEL`, and direct Binance Spot credentials. `HUMAN_APPROVAL` does not require DARWIN `OPENAI_API_KEY`, but it additionally requires `TOKEN_ENCRYPTION_KEY` and `DARWIN_MCP_BEARER_TOKEN`; readiness does not verify live Codex/Binance OAuth or authenticated provider state. Readiness is configuration readiness, not funded-order acceptance.
 
 ## Current evidence
 
@@ -329,7 +333,7 @@ In PowerShell, use `curl.exe` if `curl` resolves to the PowerShell web-request a
 | Demo Docker runtime, all demo scenarios, and zero durable demo rows | **VERIFIED** in a fresh non-financial Compose run |
 | Chromium `/demo` rendering and scenario selection | **VERIFIED** in the same fresh run |
 | Public-enabled `/showcase` Chromium rendering | **VERIFIED** |
-| MCP-native HUMAN_APPROVAL bearer/tools/list/readiness/proposal admission checks | **VERIFIED** in the PR #10 feature-branch checks |
+| MCP-native HUMAN_APPROVAL bearer/tools/list/readiness/proposal admission checks | **VERIFIED** during PR #10 acceptance |
 | Authenticated Binance Agent OS/Codex read acceptance on Windows | **VERIFIED**: bearer auth, 17 DARWIN tools, deferred Spot discovery 0 → 48, `get_universe` `FRESH`, `get_portfolio` `CONNECTED`, and deterministic zero-USDT rejection |
 | Funded HUMAN_APPROVAL proposal, provider write confirmation, or Binance order | **NOT VERIFIED**: the account was unfunded; no `WAITING_FOR_APPROVAL` attempt, approval, or order was made |
 | AUTO_BOUNDED transport regression | **VERIFIED**: uses `BinanceSpotApiClient` |
