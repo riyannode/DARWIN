@@ -33,7 +33,7 @@ PUBLIC_SHOWCASE_ENABLED=false
 
 It runs `alembic upgrade head`, starts FastAPI, waits for `/health/live`, and starts the frontend with its server-side `BACKEND_URL` pointed at the Compose backend.
 
-The demo uses deterministic Binance-format fixtures and deterministic model decisions. It does **not** require or use:
+The demo uses deterministic Binance-format fixtures and deterministic typed `AgentDecision` fixtures with `llmCall=false`. These fixtures are not live `AUTO_BOUNDED` `AgentRuntime` model decisions. It does **not** require or use:
 
 - a `.env` file;
 - an OpenAI or OpenAI-compatible provider key;
@@ -59,7 +59,7 @@ The demo uses deterministic Binance-format fixtures and deterministic model deci
 | `max-notional` | `BUY SOLUSDT` | `REJECTED / MAX_ORDER_NOTIONAL` | `SKIPPED` |
 | `hold` | `HOLD ETHUSDT` | `NOT_APPLICABLE` | `SKIPPED / NO_TRADE` |
 
-`BUY`, `SELL`, and `HOLD` are model decisions. `SKIPPED` is a system outcome; a demo BUY is never an executed order.
+The demo's `BUY`, `SELL`, and `HOLD` values are actions in typed `AgentDecision` fixtures, not live `AUTO_BOUNDED` `AgentRuntime` model decisions. `SKIPPED` is a system outcome; a demo BUY is never an executed order.
 
 ## What judges can inspect
 

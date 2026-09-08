@@ -61,11 +61,11 @@ A newly created Configured Universe defaults to `BTCUSDT`, `ETHUSDT`, `BNBUSDT`,
 Effective Universe = Configured Universe ∩ Allowed Symbols ∩ live-valid Binance Spot/USDT symbols
 ```
 
-A cycle uses live exchange metadata and required filters to derive that intersection. It fetches 10 closed candles for `15m` and `1h` for every effective candidate with bounded concurrency of eight. A failed candidate is excluded, recorded as a sanitized failure in that run's `pair_selection` evidence, and does not create a child run. If no candidate remains, the cycle completes as `NO_EFFECTIVE_SYMBOLS`.
+An `AUTO_BOUNDED` cycle uses live exchange metadata and required filters to derive that intersection. It fetches 10 closed candles for `15m` and `1h` for every effective candidate with bounded concurrency of eight. A failed candidate is excluded, recorded as a sanitized failure in that run's `pair_selection` evidence, and does not create a child run. If no candidate remains, the cycle completes as `NO_EFFECTIVE_SYMBOLS`.
 
-Configured-universe validation accepts up to 100 symbols. Candidate scanning processes the entire Effective Universe and is never silently truncated. A sufficiently large Effective Universe can exceed the worker's current 60-second cycle timeout; that cycle fails closed rather than creating a partial decision or silently reducing the candidate set.
+Configured-universe validation accepts up to 100 symbols. `AUTO_BOUNDED` candidate scanning processes the entire Effective Universe and is never silently truncated. A sufficiently large Effective Universe can exceed the worker's current 60-second cycle timeout; that cycle fails closed rather than creating a partial decision or silently reducing the candidate set.
 
-After pair selection, the final decision receives selected-pair-only current ticker, balances, open orders, recent activity, filters, Trading Mandate, policy/budget snapshots, and 48 closed candles each for `15m`, `1h`, and `4h`. Candidate history remains audit evidence and is not forwarded to the final model call.
+In `AUTO_BOUNDED`, after pair selection, the final decision receives selected-pair-only current ticker, balances, open orders, recent activity, filters, Trading Mandate, policy/budget snapshots, and 48 closed candles each for `15m`, `1h`, and `4h`. Candidate history remains audit evidence and is not forwarded to the final model call.
 
 ### Deterministic policy
 
@@ -80,7 +80,7 @@ A `BUY` or `SELL` must pass all applicable checks before it can create an action
 - no conflicting open order; and
 - emergency stop off.
 
-A `HOLD` is a model decision. `SKIPPED` is a system outcome. Policy rejection, stale evidence, an invalid selected pair, a suppressed repeat signal, no Effective Universe, or a closed financial-write gate never becomes an exchange order.
+In `AUTO_BOUNDED`, a `HOLD` is a model decision. `SKIPPED` is a system outcome. Policy rejection, stale evidence, an invalid selected pair, a suppressed repeat signal, no Effective Universe, or a closed financial-write gate never becomes an exchange order.
 
 ## Execution modes
 
@@ -96,6 +96,8 @@ The single worker processes durable outbox, approval-expiry, confirmation, notif
 ### MCP-native HUMAN_APPROVAL flow
 
 **AI proposes. DARWIN authorizes. Binance executes.** A compatible external MCP host—such as Codex, Claude Code, Cursor, or ChatGPT—owns reasoning and proposal generation. DARWIN owns the Trading Mandate, budget, universe, deterministic policy, durable state, financial-write gate, safety, and reconciliation.
+
+`HUMAN_APPROVAL` does not run DARWIN candidate scanning or internal `AgentRuntime` reasoning. The external host supplies the `BUY`/`SELL` proposal; DARWIN validates its symbol against the Configured, Allowed, and Effective Universe and fetches fresh ticker, balance, open-order, recent-activity, and filter evidence server-side.
 
 ```text
 External host reasoning

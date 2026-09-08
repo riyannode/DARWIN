@@ -28,9 +28,15 @@ DARWIN independently enforces the Trading Mandate, Allowed Symbols, Configured U
 
 ```text
 DARWIN MCP read tools
-  -> darwin.validate_proposal (dry-run; no intent or approval)
-  -> darwin.submit_proposal
-  -> durable WAITING_FOR_APPROVAL
+  -> external BUY/SELL proposal
+  -> darwin.validate_proposal (fresh server-side evidence; dry-run only)
+  -> darwin.submit_proposal (fresh server-side validation)
+  -> fresh authoritative ticker, balances, open orders, recent activity, and filters
+     through Codex App Server -> Binance Agent OS MCP
+  -> deterministic mandate / policy / budget validation
+  -> financial-write gate
+  -> if disabled: reject; no actionable durable intent
+  -> if enabled: durable WAITING_FOR_APPROVAL
   -> explicit owner darwin.approve_trade / darwin.reject_trade
   -> TradeIntentApprovalService
   -> durable execution outbox
@@ -38,6 +44,8 @@ DARWIN MCP read tools
   -> Codex App Server -> Binance Agent OS MCP
   -> provider confirmation where applicable -> Binance
 ```
+
+HUMAN_APPROVAL proposal admission happens synchronously through MCP. After admission, the worker handles durable approval expiry, execution and provider confirmation, outbox delivery, and reconciliation.
 
 The external host/model must not self-approve a proposal. `darwin.approve_trade` is intended only for explicit owner-directed approval. Proposal confidence and deterministic policy `PASS` never constitute approval. The host cannot provide trusted balances, filters, policy results, final Binance arguments, or unrestricted raw order tools. Open the private `/mcp` endpoint with `DARWIN_MCP_BEARER_TOKEN`; no external provider authentication is required to inspect or reproduce the repository's judge demo.
 
@@ -72,7 +80,7 @@ Owner configuration / safety:
 - `darwin.update_universe`
 - `darwin.emergency_stop`
 
-No `darwin.change_mode`, AUTONOMOUS start/stop/run_once controls, raw Binance trading tools, or direct financial-write tool is implemented in PR #10.
+No `darwin.change_mode` or AUTONOMOUS start/stop/run_once controls are exposed as MCP tools; the REST `AUTO_BOUNDED` start/stop/run-once controls already exist. Raw Binance trading tools and direct financial-write MCP tools are not exposed.
 
 ## Judge material
 
@@ -109,7 +117,7 @@ Positive current evidence:
 - missing and invalid bearer requests rejected with HTTP 401;
 - authenticated read projections and secret-redaction checks;
 - deterministic invalid proposal rejection with zero durable intent;
-- deterministic proposal-admission checks in the PR #10 feature-branch checks;
+- deterministic proposal-admission checks during PR #10 acceptance;
 - explicit approve/reject durable transitions through the existing state machine;
 - repeated approval idempotency and duplicate proposal idempotency;
 - conflicting idempotency fingerprint, stale mandate/policy, emergency-stop, and execution-mode admission rejection;
