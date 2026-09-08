@@ -10,7 +10,7 @@ DARWIN is an owner-operated Binance Spot decision and execution runtime with two
 - Pair selection and final `BUY`/`SELL`/`HOLD` decisions are validated as strict Pydantic models. The decision includes confidence, rationale, supporting factors, and risk factors.
 - A newly created Configured Universe bootstraps to `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`, and `XRPUSDT` and accepts up to 100 validated Spot/USDT symbols. A database upgraded from before `0004_dual_execution_and_universe` can retain the migration's four-symbol compatibility value (`BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`) until an owner updates it.
 - The Effective Universe is `Configured Universe ∩ Allowed Symbols ∩ live-valid Binance Spot/USDT symbols`.
-- The `AUTO_BOUNDED` worker scans all effective candidates, selects one pair, records selected-pair evidence, and applies deterministic policy before any execution work; the `HUMAN_APPROVAL` worker processes durable external proposals and execution work without internal model reasoning.
+- The `AUTO_BOUNDED` worker scans all effective candidates, selects one pair, records selected-pair evidence, and applies deterministic policy before any execution work; `HUMAN_APPROVAL` proposal validation and admission happen synchronously through MCP, while the worker handles resulting durable approval expiry, execution, provider confirmation, outbox/notification, and reconciliation work.
 - `AUTO_BOUNDED` uses the direct, backend-only **Binance Spot API**. `HUMAN_APPROVAL` is MCP-native: an external MCP-compatible host reasons and proposes through DARWIN's private MCP control plane, while DARWIN validates, authorizes, and persists the durable approval state.
 - The backend owns policy, budget, balances, filters, freshness, open-order conflict, emergency stop, idempotency, external-call uncertainty, reconciliation, and the financial-write gate. The external host/model and Codex cannot override those controls.
 
@@ -29,12 +29,15 @@ DARWIN independently enforces the Trading Mandate, Allowed Symbols, Configured U
 ```text
 DARWIN MCP read tools
   -> external BUY/SELL proposal
-  -> darwin.validate_proposal (fresh server-side evidence; dry-run only)
-  -> darwin.submit_proposal (fresh server-side validation)
+  -> darwin.validate_proposal
   -> fresh authoritative ticker, balances, open orders, recent activity, and filters
      through Codex App Server -> Binance Agent OS MCP
+  -> deterministic mandate / policy / budget validation (dry-run; no durable work)
+  -> darwin.submit_proposal
+  -> fresh authoritative ticker, balances, open orders, recent activity, and filters
+     through Codex App Server -> Binance Agent OS MCP again
   -> deterministic mandate / policy / budget validation
-  -> financial-write gate
+  -> pre-admission financial-write gate
   -> if disabled: reject; no actionable durable intent
   -> if enabled: durable WAITING_FOR_APPROVAL
   -> explicit owner darwin.approve_trade / darwin.reject_trade

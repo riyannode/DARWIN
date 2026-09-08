@@ -39,10 +39,13 @@ flowchart TD
 flowchart TD
     H[External MCP host] --> I[DARWIN MCP read projections]
     I --> P[External reasoning / proposal]
-    P --> V[validate_proposal / submit_proposal]
-    V --> C[Codex App Server -> Binance Agent OS MCP: fetch authoritative evidence]
-    C --> D[Deterministic mandate / policy / budget validation]
-    D --> F{Financial writes enabled?}
+    P --> V[darwin.validate_proposal]
+    V --> C1[Fresh authoritative Binance evidence via Codex App Server -> Binance Agent OS MCP]
+    C1 --> D1[Deterministic mandate / policy / budget validation: dry-run]
+    D1 --> S[darwin.submit_proposal]
+    S --> C2[Fresh authoritative Binance evidence via Codex App Server -> Binance Agent OS MCP again]
+    C2 --> D2[Deterministic mandate / policy / budget validation]
+    D2 --> F{Pre-admission financial-write gate}
     F -->|No| N[Reject / no actionable durable intent]
     F -->|Yes| W[WAITING_FOR_APPROVAL]
     W --> O[Explicit owner approval]
@@ -102,12 +105,17 @@ The single worker processes durable outbox, approval-expiry, confirmation, notif
 ```text
 External host reasoning
   -> DARWIN MCP read projections
-  -> darwin.validate_proposal (dry-run; no durable work)
-  -> darwin.submit_proposal (fresh server-side validation)
-  -> DARWIN fetches fresh authoritative Binance evidence through
+  -> darwin.validate_proposal
+  -> DARWIN fetches fresh authoritative ticker, balances, open orders,
+     recent activity, and filters through Codex App Server -> Binance Agent OS MCP
+  -> deterministic mandate / policy / budget validation (dry-run; no durable work)
+  -> darwin.submit_proposal
+  -> DARWIN fetches that authoritative Binance evidence again through
      Codex App Server -> Binance Agent OS MCP
   -> deterministic mandate / policy / budget validation
-  -> WAITING_FOR_APPROVAL TradeIntent + explicit approval record
+  -> pre-admission financial-write gate
+  -> if disabled: reject; no actionable durable intent
+  -> if enabled: WAITING_FOR_APPROVAL TradeIntent + explicit approval record
   -> darwin.approve_trade or darwin.reject_trade
   -> existing TradeIntentApprovalService
   -> durable execution outbox / ApprovedExecution

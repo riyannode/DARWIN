@@ -100,7 +100,7 @@ This profile makes possible financial writes only after deterministic authorizat
 
 ## Common live configuration
 
-Set these values in `backend/.env` for a ready live API:
+Set these base values in `backend/.env`; add the mode-specific settings below before `/health/ready` can pass:
 
 ```dotenv
 DEMO_MODE=false

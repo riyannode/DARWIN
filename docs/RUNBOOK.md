@@ -89,12 +89,15 @@ The host may discover the implemented DARWIN tools, read `darwin.get_status`, `d
 ```text
 read DARWIN MCP state
   -> external BUY/SELL proposal
-  -> darwin.validate_proposal (fresh server-side evidence and dry-run)
-  -> darwin.submit_proposal (fresh server-side validation)
+  -> darwin.validate_proposal
   -> fresh authoritative ticker, balances, open orders, recent activity, and filters
      through Codex App Server -> Binance Agent OS MCP
+  -> deterministic mandate / policy / budget validation (dry-run; no durable work)
+  -> darwin.submit_proposal
+  -> fresh authoritative ticker, balances, open orders, recent activity, and filters
+     through Codex App Server -> Binance Agent OS MCP again
   -> deterministic mandate / policy / budget validation
-  -> financial-write gate
+  -> pre-admission financial-write gate
   -> if disabled: reject; no actionable durable intent
   -> if enabled: WAITING_FOR_APPROVAL
   -> explicit owner darwin.approve_trade or darwin.reject_trade
